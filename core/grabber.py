@@ -723,8 +723,12 @@ class OKPayGrabber:
                 await self.on_record(record)
             except Exception:
                 pass
-        if not await self.notifier.send(report):
-            log.debug("通知未发出")
+        # 【修改1】只发送成功抢到的通知，屏蔽失败
+        if r.ok:
+            if not await self.notifier.send(report):
+                log.debug("通知未发出")
+        else:
+            log.debug("跳过失败红包通知")
 
     async def _report(self, msg, chat_title, rp, r, tm):
         report = build_report(rp, r.ok, r.amount, r.winner, tm, chat_title)
@@ -753,5 +757,9 @@ class OKPayGrabber:
                 await self.on_record(record)
             except Exception as e:
                 log.debug(f"记录持久化失败: {e}")
-        if not await self.notifier.send(report):
-            log.debug("通知未发出")
+        # 【修改2】只发送成功抢到的通知，屏蔽失败
+        if r.ok:
+            if not await self.notifier.send(report):
+                log.debug("通知未发出")
+        else:
+            log.debug("跳过失败红包通知")
