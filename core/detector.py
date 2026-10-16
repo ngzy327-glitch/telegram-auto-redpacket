@@ -336,14 +336,23 @@ def _collect_quiz_buttons(msg) -> list[tuple[str, bytes]]:
 
 
 def find_captcha_quiz(msg, decoded_text: str | None = None) -> tuple[str, list[tuple[str, bytes]]] | None:
-    """验证码红包：文本含算式 + callback 按钮（数字或字母选项）。
+    """验证码红包：文本含算式或明文验证码 + callback 按钮（数字或字母选项）。
     decoded_text: 已解码 custom emoji 后的文本（可选，未提供则用 raw_text）。
-    返回 (算式文本, [(按钮标签, callback_data), ...]) 或 None。"""
+    返回 (算式文本或明文数字, [(按钮标签, callback_data), ...]) 或 None。"""
     text = decoded_text or getattr(msg, "text", None) or getattr(msg, "raw_text", None) or ""
+    
+    # 1. 尝试匹配算术题（如 1+1=?）
     m = _MATH_RE.search(text)
-    if not m:
-        return None
-    expr = m.group(0)
+    if m:
+        expr = m.group(0)
+    else:
+        # 2. 尝试匹配 "请选择正确的验证码 1390" 这种明文数字
+        # 兼容 "验证码1390", "验证码 1390", "验证码：1390" 等格式
+        m2 = re.search(r"验证码[:：\s]*([0-9A-Za-z]+)", text)
+        if not m2:
+            return None
+        expr = m2.group(1)  # 提取出纯数字，如 "1390"
+        
     buttons = _collect_quiz_buttons(msg)
     return (expr, buttons) if buttons else None
 
@@ -468,7 +477,7 @@ def classify(msg, direct_keywords: list[str] | None = None, decoded_text: str | 
     if data:
         return _wrap(RedPacket("direct", direct_data=data))
 
-    # 2) 窗口验证码（群内算式 + callback 选项按钮）
+    # 2) 窗口验证码（群内算式或明文验证码 + callback 选项按钮）
     quiz = find_captcha_quiz(msg, decoded_text)
     if quiz:
         from core.claimers.captcha import solve_expr
