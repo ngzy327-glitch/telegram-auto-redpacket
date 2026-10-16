@@ -165,7 +165,7 @@ export type BlockType = "group" | "channel" | "user" | "bot"
 export interface BlockRule {
   id: number
   target_type: BlockType
-  target_id: number
+  target_id: number | string // 修改这里：支持数字 ID 和 @用户名
   target_name: string | null
   note: string | null
   created_at: string | null
