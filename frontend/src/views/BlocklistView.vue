@@ -77,16 +77,36 @@ function openAdd() {
 }
 
 async function submitAdd() {
-  const id = Number(form.target_id.trim())
-  if (!Number.isFinite(id) || id === 0) {
-    ElMessage.error("请输入有效的数字 ID（群/频道为负数，用户/机器人为正数）")
+  const rawId = form.target_id.trim()
+  if (!rawId) {
+    ElMessage.error("请输入目标 ID 或 @用户名")
     return
   }
+
+  // 群组/频道必须是负数（数字ID）
+  if (form.target_type === "group" || form.target_type === "channel") {
+    if (!/^-\d+$/.test(rawId)) {
+      ElMessage.error("群/频道 ID 必须为负数（如 -100xxxx）")
+      return
+    }
+  } else {
+    // 用户/机器人：允许 @用户名 或 数字ID
+    const isUsername = rawId.startsWith("@")
+    const isNumeric = /^\d+$/.test(rawId)
+    if (!isUsername && !isNumeric) {
+      ElMessage.error("用户/机器人输入格式应为 @用户名 或 数字 ID")
+      return
+    }
+  }
+
+  // 如果是纯数字，转为数字类型；如果是 @用户名，保留字符串
+  const finalTargetId = /^\d+$/.test(rawId) ? Number(rawId) : rawId
+
   adding.value = true
   try {
     await api.addBlockRule({
       target_type: form.target_type,
-      target_id: id,
+      target_id: finalTargetId as any, // 使用 as any 绕过前端类型限制，后端已支持字符串
       target_name: form.target_name.trim() || null,
       note: form.note.trim() || null,
     })
@@ -197,9 +217,9 @@ onMounted(load)
           </el-radio-group>
         </el-form-item>
         <el-form-item label="目标 ID">
-          <el-input v-model="form.target_id" placeholder="群/频道为负数（如 -100xxxx），用户/机器人为正数" />
+          <el-input v-model="form.target_id" placeholder="群/频道填负数，用户/机器人可填数字ID或@用户名" />
           <div class="hint">
-            群/频道 ID 可在「秒包管理」查看；用户/机器人需填数字 ID。
+            群/频道 ID 可在「秒包管理」查看；用户/机器人支持数字 ID 或 @用户名（如 @okpay）。
           </div>
         </el-form-item>
         <el-form-item label="名称（可选）">
