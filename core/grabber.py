@@ -195,20 +195,48 @@ class OKPayGrabber:
         return chat_id not in self.run.disabled_chat_ids
 
     def _blocked(self, event, msg) -> str | None:
-        """屏蔽规则命中检测（私信/群/频道/用户/机器人）。返回命中原因，None=放行。"""
+        """屏蔽规则命中检测（私信/群/频道/用户/机器人）。
+        支持数字ID和用户名（带或不带@）两种格式。返回命中原因，None=放行。"""
         run = self.run
         if run.block_private and getattr(event, "is_private", False):
             return "私信"
+        
+        # 1. 检查群/频道 ID
         cid = getattr(msg, "chat_id", None)
         if cid is not None and cid in run.blocked_chat_ids:
             return f"群/频道 {cid}"
+        
+        # 2. 检查屏蔽发送者（支持 ID 和 用户名）
         if run.blocked_sender_ids:
-            via = getattr(msg, "via_bot_id", None)
-            if via and via in run.blocked_sender_ids:
-                return f"机器人 {via}"
-            sender_id = getattr(getattr(msg, "from_id", None), "user_id", None)
-            if sender_id and sender_id in run.blocked_sender_ids:
-                return f"用户 {sender_id}"
+            # 将屏蔽列表统一转换为小写字符串，方便与用户名比较
+            blocked_items = [str(x).lower() for x in run.blocked_sender_ids]
+            
+            # 2.1 检查通过机器人发送的消息 (via_bot)
+            via = getattr(msg, "via_bot", None)
+            if via:
+                # 检查数字 ID
+                via_id = getattr(via, "id", None)
+                if via_id and via_id in run.blocked_sender_ids:
+                    return f"机器人 ID {via_id}"
+                
+                # 检查用户名 (带 @ 和不带 @ 都匹配)
+                if getattr(via, "username", None):
+                    u = via.username.lower()
+                    if u in blocked_items or f"@{u}" in blocked_items:
+                        return f"机器人 @{u}"
+            
+            # 2.2 检查普通发送者 (sender)
+            sender = getattr(msg, "sender", None)
+            if sender:
+                sender_id = getattr(sender, "id", None)
+                if sender_id and sender_id in run.blocked_sender_ids:
+                    return f"用户 ID {sender_id}"
+                
+                if getattr(sender, "username", None):
+                    su = sender.username.lower()
+                    if su in blocked_items or f"@{su}" in blocked_items:
+                        return f"用户 @{su}"
+                        
         return None
 
     async def _decode_emoji_expr(self, msg, buttons=None) -> str | None:
