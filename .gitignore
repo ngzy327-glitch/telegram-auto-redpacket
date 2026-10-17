@@ -18,6 +18,10 @@ frontend/tsconfig.tsbuildinfo
 # 本地数据 / 调试
 debug/
 data/
+local.db
+local.db-journal
+local.db-wal
+local.db-shm
 log.txt
 *.log
 .DS_Store
