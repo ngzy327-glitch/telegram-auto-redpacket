@@ -16,7 +16,7 @@ log = logging.getLogger("backend.settings")
 # 全局设置（系统配置页）
 SETTING_KEYS = ["vision_api_key", "vision_base_url", "vision_model",
                 "vision_models", "max_attempts", "notify_bot_token",
-                "direct_keywords", "twocaptcha_key",
+                "direct_keywords", "capmonster_key",
                 # 领取策略过滤（core/filters.py）
                 "filter_keywords", "filter_currency_mode", "filter_currencies",
                 "filter_min_amounts", "filter_skip_conditions",
@@ -48,8 +48,8 @@ MODULE_CONFIG_FIELDS: dict[str, list[dict]] = {
          "hint": "多模型并发，格式 model:tag 逗号分隔。如 qwen3-vl-flash:flash,qwen3-vl-plus:plus"},
     ],
     "fulilai": [
-        {"key": "twocaptcha_key", "label": "2captcha API Key", "type": "password",
-         "hint": "福利来红包 hCaptcha 打码服务密钥，不填则模块不生效"},
+        {"key": "capmonster_key", "label": "CapMonster API Key", "type": "password",
+         "hint": "福利来红包 hCaptcha 打码服务密钥（https://dash.capmonster.cloud），不填则模块不生效"},
         {"key": "pool_size", "label": "候选 Token 数量", "type": "text",
          "hint": "后台维持的 hCaptcha token 数量（默认 1，越多响应越快但越费钱）"},
         {"key": "pool_enabled", "label": "打码池开关", "type": "switch",
@@ -80,7 +80,7 @@ def _defaults() -> dict:
         "max_attempts": str(config.max_attempts),
         "notify_bot_token": config.notify_bot_token,
         "direct_keywords": "领取",
-        "twocaptcha_key": "",
+        "capmonster_key": "",
         # 领取策略过滤：默认全部不启用
         "filter_keywords": "",        # 换行分隔
         "filter_currency_mode": "off",  # off|white|black
@@ -189,7 +189,7 @@ async def _migrate_to_module_configs(session):
         "mod.captcha.vision_api_key": gs.get("vision_api_key", ""),
         "mod.captcha.vision_base_url": gs.get("vision_base_url", ""),
         "mod.captcha.vision_model": gs.get("vision_model", ""),
-        "mod.fulilai.twocaptcha_key": gs.get("twocaptcha_key", ""),
+        "mod.fulilai.capmonster_key": gs.get("capmonster_key", "") or gs.get("twocaptcha_key", ""),
     }
     added = False
     for k, v in migrations.items():
@@ -334,8 +334,9 @@ async def build_runconfig(session, account) -> RunConfig:
                     or s.get("vision_model", "") or config.vision_model)
     vision_models_raw = webapp_cfg.get("vision_models") or s.get("vision_models", "")
 
-    # fulilai 2captcha key（模块级 → 全局）
-    twocaptcha = fulilai_cfg.get("twocaptcha_key") or s.get("twocaptcha_key", "")
+    # fulilai capmonster key（模块级 → 全局，兼容旧键 twocaptcha_key）
+    capmonster = (fulilai_cfg.get("capmonster_key") or fulilai_cfg.get("twocaptcha_key")
+                  or s.get("capmonster_key", "") or s.get("twocaptcha_key", ""))
 
     try:
         max_att = int(s.get("max_attempts") or config.max_attempts)
@@ -362,7 +363,7 @@ async def build_runconfig(session, account) -> RunConfig:
             "webapp": mods.get("webapp", True),
             "fulilai": mods.get("fulilai", True),
         },
-        twocaptcha_key=twocaptcha,
+        capmonster_key=capmonster,
         direct_keywords=direct_kw,
         disabled_chat_ids=disabled_ids,
         monitor_enabled=getattr(account, "monitor_enabled", True),

@@ -1,7 +1,7 @@
-"""福利来红包抢包器 — 2captcha token 池 + 纯 HTTP 领取。
+"""福利来红包抢包器 — CapMonster Cloud token 池 + 纯 HTTP 领取。
 
 架构：
-  TokenPool:  后台持续用 2captcha 解 hCaptcha，池中维持 1 个有效 token
+  TokenPool:  后台持续用 CapMonster 解 hCaptcha，池中维持 1 个有效 token
   claim():    红包来了 → 池取 token → POST /get → 到账
 
 用法：
@@ -37,7 +37,7 @@ log = logging.getLogger("fulilai")
 
 # ── 配置 ──
 
-TWOCAPTCHA_KEY = os.getenv("TWOCAPTCHA_KEY", "")
+CAPMONSTER_KEY = os.getenv("CAPMONSTER_KEY", "")
 HCAPTCHA_SITEKEY = "146a7320-f922-436a-948c-dfe677fef6c4"
 HCAPTCHA_PAGE = "https://img1.shjyzn.com/tgbot/"
 API_BASE = "https://aliyun.xg805.com/api/gate/trade/web/redpacket"
@@ -45,8 +45,9 @@ BOT_USERNAME = "fllqb"
 BOT_ID_STR = "5495837487"
 CHAT_ID = -1003807395473
 
+CAPMONSTER_API = "https://api.capmonster.cloud"
 TOKEN_TTL = 115      # token 有效期（秒）
-POLL_INTERVAL = 5    # 2captcha 轮询间隔
+POLL_INTERVAL = 5    # 打码轮询间隔
 MAX_SOLVE_WAIT = 300 # 单次最长等待
 
 
@@ -145,33 +146,38 @@ class TokenPool:
             self._solving -= 1
 
     async def _do_solve(self) -> str | None:
-        r = await self._http.get("https://2captcha.com/in.php", params={
-            "key": TWOCAPTCHA_KEY, "method": "hcaptcha",
-            "sitekey": HCAPTCHA_SITEKEY, "pageurl": HCAPTCHA_PAGE, "json": 1,
+        r = await self._http.post(f"{CAPMONSTER_API}/createTask", json={
+            "clientKey": CAPMONSTER_KEY,
+            "task": {
+                "type": "HCaptchaTaskProxyless",
+                "websiteURL": HCAPTCHA_PAGE,
+                "websiteKey": HCAPTCHA_SITEKEY,
+            },
         })
         resp = r.json()
-        if resp.get("status") != 1:
-            log.warning(f"提交打码失败: {resp.get('request', '未知错误')}")
+        if resp.get("errorId") != 0:
+            log.warning(f"提交打码失败: {resp.get('errorDescription', resp)}")
             return None
 
-        task_id = resp["request"]
+        task_id = resp["taskId"]
         t0 = time.time()
-        log.info(f"已提交打码任务 #{task_id}，等待人工处理...")
+        log.info(f"已提交打码任务 #{task_id}，等待处理...")
 
         last_log = t0
         while time.time() - t0 < MAX_SOLVE_WAIT:
             await asyncio.sleep(POLL_INTERVAL)
-            r = await self._http.get("https://2captcha.com/res.php", params={
-                "key": TWOCAPTCHA_KEY, "action": "get", "id": task_id, "json": 1,
+            r = await self._http.post(f"{CAPMONSTER_API}/getTaskResult", json={
+                "clientKey": CAPMONSTER_KEY,
+                "taskId": task_id,
             })
             resp = r.json()
             elapsed = time.time() - t0
-            if resp.get("status") == 1:
-                log.info(f"打码成功（耗时 {elapsed:.0f}s）")
-                return resp["request"]
-            if "ERROR" in resp.get("request", ""):
-                log.warning(f"打码失败: {resp['request']}（耗时 {elapsed:.0f}s）")
+            if resp.get("errorId") != 0:
+                log.warning(f"打码失败: {resp.get('errorDescription', resp)}（耗时 {elapsed:.0f}s）")
                 return None
+            if resp.get("status") == "ready":
+                log.info(f"打码成功（耗时 {elapsed:.0f}s）")
+                return resp["solution"]["gRecaptchaResponse"]
             if time.time() - last_log >= 30:
                 log.info(f"等待打码中... 已等 {elapsed:.0f}s")
                 last_log = time.time()

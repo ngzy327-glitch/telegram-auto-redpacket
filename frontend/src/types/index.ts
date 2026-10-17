@@ -58,7 +58,7 @@ export interface Settings {
   max_attempts: string
   notify_bot_token: string
   direct_keywords: string
-  twocaptcha_key: string
+  capmonster_key: string
   // —— 领取策略过滤（字符串形态，与后端 settings KV 对齐）——
   filter_keywords: string // 换行分隔关键词黑名单
   filter_currency_mode: string // off | white | black

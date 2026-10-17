@@ -72,7 +72,7 @@ class SettingsUpdate(BaseModel):
     max_attempts: int | str | None = None
     notify_bot_token: str | None = None
     direct_keywords: str | None = None
-    twocaptcha_key: str | None = None
+    capmonster_key: str | None = None
     # 领取策略过滤（均为字符串形态，解析见 settings_store.parse_filter_settings）
     filter_keywords: str | None = None        # 换行分隔关键词黑名单
     filter_currency_mode: str | None = None   # off|white|black

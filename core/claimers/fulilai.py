@@ -1,4 +1,4 @@
-"""模块5 福利来红包：2captcha hCaptcha token 池 + 纯 HTTP 领取。
+"""模块5 福利来红包：CapMonster Cloud hCaptcha token 池 + 纯 HTTP 领取。
 
 跨账号共享：从群消息提取的 hash 公用；但 hCaptcha token 一次性绑定单次领取，
 一个 token 只能用一个号，N 个账号需要 N 个 token，故 token 池大小应配成≈账号数。
@@ -7,7 +7,7 @@ init_data 由各账号 RequestWebView 各自获取（带身份签名），不可
 流程：
 1. 从消息按钮 URL 提取 hash
 2. RequestWebViewRequest 获取 init_data（绑定当前账号身份）
-3. token 池取 hCaptcha token（后台 2captcha 持续解题，维持 N 个备用）
+3. token 池取 hCaptcha token（后台 CapMonster 持续解题，维持 N 个备用）
 4. POST /get 领取
 """
 import asyncio
@@ -32,6 +32,9 @@ API_BASE = "https://aliyun.xg805.com/api/gate/trade/web/redpacket"
 BOT_USERNAME = "fllqb"
 BOT_ID_STR = "5495837487"
 
+# CapMonster Cloud（https://dash.capmonster.cloud）JSON API
+CAPMONSTER_API = "https://api.capmonster.cloud"
+
 TOKEN_TTL = 115
 POLL_INTERVAL = 5
 MAX_SOLVE_WAIT = 300
@@ -50,7 +53,7 @@ class _CachedToken:
 
 
 class HCaptchaTokenPool:
-    """后台 2captcha 解题，维持 N 个有效 token 满额循环：
+    """后台 CapMonster 解题，维持 N 个有效 token 满额循环：
     启动即并发解 N 个；被取走/过期几个，下一轮（3s）立即补几个。"""
 
     def __init__(self, api_key: str, pool_size: int = 1):
@@ -139,33 +142,39 @@ class HCaptchaTokenPool:
             self._solving -= 1
 
     async def _do_solve(self) -> str | None:
-        r = await self._http.get("https://2captcha.com/in.php", params={
-            "key": self.api_key, "method": "hcaptcha",
-            "sitekey": HCAPTCHA_SITEKEY, "pageurl": HCAPTCHA_PAGE, "json": 1,
+        # CapMonster Cloud: createTask（HCaptchaTaskProxyless 免代理）
+        r = await self._http.post(f"{CAPMONSTER_API}/createTask", json={
+            "clientKey": self.api_key,
+            "task": {
+                "type": "HCaptchaTaskProxyless",
+                "websiteURL": HCAPTCHA_PAGE,
+                "websiteKey": HCAPTCHA_SITEKEY,
+            },
         })
         resp = r.json()
-        if resp.get("status") != 1:
-            log.warning(f"提交打码失败: {resp.get('request', '未知错误')}")
+        if resp.get("errorId") != 0:
+            log.warning(f"提交打码失败: {resp.get('errorDescription', resp)}")
             return None
 
-        task_id = resp["request"]
+        task_id = resp["taskId"]
         t0 = time.time()
         log.debug(f"已提交打码任务 #{task_id}")
 
         last_log = t0
         while time.time() - t0 < MAX_SOLVE_WAIT:
             await asyncio.sleep(POLL_INTERVAL)
-            r = await self._http.get("https://2captcha.com/res.php", params={
-                "key": self.api_key, "action": "get", "id": task_id, "json": 1,
+            r = await self._http.post(f"{CAPMONSTER_API}/getTaskResult", json={
+                "clientKey": self.api_key,
+                "taskId": task_id,
             })
             resp = r.json()
             elapsed = time.time() - t0
-            if resp.get("status") == 1:
-                log.debug(f"打码成功（耗时 {elapsed:.0f}s）")
-                return resp["request"]
-            if "ERROR" in resp.get("request", ""):
-                log.warning(f"打码失败: {resp['request']}（耗时 {elapsed:.0f}s）")
+            if resp.get("errorId") != 0:
+                log.warning(f"打码失败: {resp.get('errorDescription', resp)}（耗时 {elapsed:.0f}s）")
                 return None
+            if resp.get("status") == "ready":
+                log.debug(f"打码成功（耗时 {elapsed:.0f}s）")
+                return resp["solution"]["gRecaptchaResponse"]
             if time.time() - last_log >= 30:
                 log.debug(f"等待打码中... 已等 {elapsed:.0f}s")
                 last_log = time.time()
@@ -222,9 +231,9 @@ def pool_resize(size: int):
 # ── 领取器 ──
 
 class FulilaiClaimer:
-    def __init__(self, client, twocaptcha_key: str, pool_size: int = 1):
+    def __init__(self, client, capmonster_key: str, pool_size: int = 1):
         self.client = client
-        self.pool = get_pool(twocaptcha_key, pool_size=pool_size)
+        self.pool = get_pool(capmonster_key, pool_size=pool_size)
 
     async def start(self):
         await self.pool.start()

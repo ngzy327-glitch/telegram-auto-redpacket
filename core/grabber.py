@@ -120,11 +120,11 @@ class OKPayGrabber:
         self._direct = DirectClaimer(self.client)
         self._captcha = CaptchaClaimer(self.client)
         self._dm_captcha = DmCaptchaClaimer(self.client)
-        if self.run.twocaptcha_key:
+        if self.run.capmonster_key:
             fulilai_cfg = self.run.module_configs.get("fulilai", {})
             pool_size = max(1, int(fulilai_cfg.get("pool_size") or "1"))
             pool_enabled = fulilai_cfg.get("pool_enabled", "1") != "0"
-            self._fulilai = FulilaiClaimer(self.client, self.run.twocaptcha_key, pool_size=pool_size)
+            self._fulilai = FulilaiClaimer(self.client, self.run.capmonster_key, pool_size=pool_size)
             if pool_enabled:
                 asyncio.create_task(self._fulilai.start())
 
@@ -643,7 +643,7 @@ class OKPayGrabber:
                 r = await self._dm_captcha.claim(rp.webapp_bot, rp.start_param, tm)
             elif rp.kind == "fulilai":
                 if not self._fulilai:
-                    log.debug("福利来模块未启用（缺少 2captcha key）")
+                    log.debug("福利来模块未启用（缺少 capmonster key）")
                     break
                 r = await self._fulilai.claim(msg, rp.fulilai_hash, tm, startapp=rp.fulilai_startapp)
             else:

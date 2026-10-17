@@ -102,7 +102,7 @@ class RunConfig:
     chrome_path: str
     modules: dict                        # {'direct': bool, 'captcha': bool, 'webapp': bool, 'fulilai': bool}
     direct_keywords: list[str] = None    # 直接领取按钮匹配关键词（子串匹配）
-    twocaptcha_key: str = ""             # 2captcha API key（福利来 hCaptcha 用）
+    capmonster_key: str = ""             # CapMonster API key（福利来 hCaptcha 用）
     disabled_chat_ids: set[int] = None   # 关闭了秒包的 chat_id 集合（不在集合内=默认开启）
     monitor_enabled: bool = True         # 是否监控红包消息
     claim_enabled: bool = True           # 是否参与秒包领取
