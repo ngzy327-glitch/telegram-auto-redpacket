@@ -476,7 +476,7 @@ class OKPayGrabber:
                 else:
                     self.stats["failed"] += 1
                 r.error_reason = r.error_reason or derive_error_reason(tm.get("feedback"))
-                await self._report_simple(chat_title, rp, r, tm)
+                await self._report_simple(chat_title, rp, r, tm, chat_id=chat_id, msg_id=msg_id)
                 return r
             finally:
                 self._inflight.discard(key)
@@ -532,7 +532,7 @@ class OKPayGrabber:
             self.stats["failed"] += 1
 
         r.error_reason = r.error_reason or derive_error_reason(tm.get("feedback"))
-        await self._report_simple(chat_title, rp, r, tm)
+        await self._report_simple(chat_title, rp, r, tm, chat_id=key[0], msg_id=key[1])
         return r
 
     async def _run_dm_captcha_direct(self, rp, key, chat_title):
@@ -553,7 +553,7 @@ class OKPayGrabber:
             self.stats["failed"] += 1
 
         r.error_reason = r.error_reason or derive_error_reason(tm.get("feedback"))
-        await self._report_simple(chat_title, rp, r, tm)
+        await self._report_simple(chat_title, rp, r, tm, chat_id=key[0], msg_id=key[1])
         return r
 
     async def _run_callback_fast(self, rp, key, chat_id, msg_id, chat_title):
@@ -602,7 +602,7 @@ class OKPayGrabber:
         if result:
             r, tm = result
             r.error_reason = r.error_reason or derive_error_reason(tm.get("feedback"))
-            await self._report_simple(chat_title, rp, r, tm)
+            await self._report_simple(chat_title, rp, r, tm, chat_id=chat_id, msg_id=msg_id)
             return r
         return None
 
@@ -730,11 +730,14 @@ class OKPayGrabber:
             cid_str = str(cid or 0)
         return f"https://t.me/c/{cid_str}/{msg.id}"
 
-    async def _report_simple(self, chat_title, rp, r, tm):
+    async def _report_simple(self, chat_title, rp, r, tm, chat_id=None, msg_id=None):
         """无消息对象的报告（webapp 快路径用）。"""
         report = build_report(rp, r.ok, r.amount, r.winner, tm, chat_title)
         log.info(report.replace("\n", " ｜ "))
         account_name = self.me.first_name if self.me else ""
+        
+        link = f"https://t.me/c/{str(chat_id).replace('-100', '')}/{msg_id}" if chat_id and msg_id else ""
+        
         record = {
             "ts": time.time(), "chat": chat_title,
             "target_bot": f"@{rp.webapp_bot}" if rp.webapp_bot else "",
@@ -751,12 +754,24 @@ class OKPayGrabber:
                 await self.on_record(record)
             except Exception:
                 pass
-        # 【修改1】只发送成功抢到的通知，屏蔽失败
-        if r.ok:
-            if not await self.notifier.send(report):
+        
+        # 【修改】拼接群组ID、金额、消息链接
+        push_report = report
+        if chat_id:
+            push_report += f"\n群组ID: {chat_id}"
+        if r.amount:
+            push_report += f"\n领取金额: {r.amount}"
+        if link:
+            push_report += f"\n消息链接: {link}"
+        
+        # 只有明确反馈了金额才发送通知
+        if r.ok and r.amount:
+            if not await self.notifier.send(push_report):
                 log.debug("通知未发出")
+        elif r.ok and not r.amount:
+            log.debug("跳过通知：领取成功但未解析出金额")
         else:
-            log.debug("跳过失败红包通知")
+            log.debug("跳过通知：领取失败")
 
     async def _report(self, msg, chat_title, rp, r, tm):
         report = build_report(rp, r.ok, r.amount, r.winner, tm, chat_title)
@@ -785,9 +800,22 @@ class OKPayGrabber:
                 await self.on_record(record)
             except Exception as e:
                 log.debug(f"记录持久化失败: {e}")
-        # 【修改2】只发送成功抢到的通知，屏蔽失败
-        if r.ok:
-            if not await self.notifier.send(report):
+                
+        # 【修改】拼接群组ID、金额、消息链接
+        push_report = report
+        cid = getattr(msg, "chat_id", None)
+        if cid:
+            push_report += f"\n群组ID: {cid}"
+        if r.amount:
+            push_report += f"\n领取金额: {r.amount}"
+        if link:
+            push_report += f"\n消息链接: {link}"
+                
+        # 只有明确反馈了金额才发送通知
+        if r.ok and r.amount:
+            if not await self.notifier.send(push_report):
                 log.debug("通知未发出")
+        elif r.ok and not r.amount:
+            log.debug("跳过通知：领取成功但未解析出金额")
         else:
-            log.debug("跳过失败红包通知")
+            log.debug("跳过通知：领取失败")
