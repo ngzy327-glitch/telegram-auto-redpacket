@@ -79,8 +79,15 @@ class CaptchaClaimer:
             btn_labels = [l for l, _ in buttons]
             answer, corrections = solve_expr_with_buttons(expr, btn_labels)
             if answer is None:
-                log.warning(f"无法解析算式: {expr!r}")
-                return ClaimResult(False, retryable=False)
+                # 不是算式 → 消息直接给出答案（如"验证码 1390"、"验证码 ABC"）
+                # expr 本身就是答案，归一化后直接使用
+                plain_answer = _normalize_operand(expr).upper()
+                if plain_answer:
+                    answer = plain_answer
+                    log.info(f"🔑 明文验证码答案: {answer}")
+                else:
+                    log.warning(f"无法解析算式: {expr!r}")
+                    return ClaimResult(False, retryable=False)
             if corrections:
                 tm["corrections"] = corrections
             # 解出的答案存 Redis 供其他账号复用
