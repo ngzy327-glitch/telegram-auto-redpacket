@@ -23,6 +23,12 @@ def _parse_models(raw: str) -> list[tuple[str, str]]:
     return out or [("qwen3-vl-flash", "flash"), ("qwen3-vl-plus", "plus")]
 
 
+def _parse_keywords(raw: str) -> list[str]:
+    """解析 RED_PACKET_KEYWORDS：逗号分隔的关键词列表；缺省给 OKPay 标准文案。"""
+    out = [item.strip() for item in (raw or "").split(",") if item.strip()]
+    return out or ["发送了一个红包", "💵总金额"]
+
+
 @dataclass
 class Config:
     # —— Telegram 应用凭据（登录新账号用，应用级共享）——
@@ -32,7 +38,7 @@ class Config:
     # —— OKPay 红包识别 ——
     okpay_bot_ids: set[int] = field(default_factory=lambda: {5703356189})
     red_packet_keywords: list[str] = field(
-        default_factory=lambda: ["发送了一个红包", "💵总金额"])
+        default_factory=lambda: _parse_keywords(os.getenv("RED_PACKET_KEYWORDS", "")))
     max_attempts: int = int(os.getenv("MAX_ATTEMPTS", "4"))
 
     # —— 通知机器人（领取状态由 bot 私聊推送给账号本人，不用账号自己发消息暴露）——
