@@ -12,11 +12,14 @@ from ..auth import get_current_user
 from ..db import get_session
 from ..models import Account, GrabRecord, User
 from ..runner import runner
+from core.config import config
 
 router = APIRouter(prefix="/api/overview", tags=["overview"])
 
 _TZ_NAME = "Asia/Shanghai"
 _TZ = timezone(timedelta(hours=8))
+# SQLite 无 timezone() 函数，分日改用日期修饰符（本地开发用 SQLite 时不报错）
+_SQLITE = config.database_url.startswith("sqlite")
 
 
 @router.get("")
@@ -62,14 +65,20 @@ async def overview(user: User = Depends(get_current_user),
         record_conds.append(GrabRecord.account_id.in_(account_ids))
 
     # ── 近 7 日趋势（按北京时区分日，一次聚合）──
-    day = func.date(func.timezone(_TZ_NAME, GrabRecord.created_at))
     now_bj = datetime.now(_TZ)
-    since = (now_bj - timedelta(days=6)).replace(hour=0, minute=0, second=0, microsecond=0)
+    since_bj = (now_bj - timedelta(days=6)).replace(hour=0, minute=0, second=0, microsecond=0)
+    if _SQLITE:
+        # created_at 以 UTC 明文存储：用 '+8 hours' 得到北京日期，阈值换算回 UTC 无时区比较
+        day = func.date(GrabRecord.created_at, "+8 hours")
+        since_bind = since_bj.astimezone(timezone.utc).replace(tzinfo=None)
+    else:
+        day = func.date(func.timezone(_TZ_NAME, GrabRecord.created_at))
+        since_bind = since_bj
     rows = (await s.execute(
         select(day.label("d"),
                func.count(GrabRecord.id),
                func.count(GrabRecord.id).filter(GrabRecord.ok.is_(True)))
-        .where(GrabRecord.created_at >= since, *record_conds)
+        .where(GrabRecord.created_at >= since_bind, *record_conds)
         .group_by(day))).all()
     daily = {str(r[0]): (r[1], r[2]) for r in rows}
     today_str = now_bj.strftime("%Y-%m-%d")
