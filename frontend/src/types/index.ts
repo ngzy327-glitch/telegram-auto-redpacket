@@ -32,7 +32,7 @@ export interface ModuleToggle {
 export interface ModuleConfigField {
   key: string
   label: string
-  type: "text" | "password" | "switch"
+  type: "text" | "password" | "switch" | "textarea"
   hint: string
   value: string
 }
