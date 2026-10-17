@@ -32,7 +32,7 @@ except AttributeError:
     KeyboardButtonCallback = types.InlineButtonTypeCallback
     KeyboardButtonUrl = types.InlineButtonTypeUrl
 
-from .charset import MATH_RE as _MATH_RE
+from .charset import MATH_RE as _MATH_RE, buttons_are_digit, normalize_operand
 from .config import config
 
 _ZERO_WIDTH = "\u200b\u200c\u200d\ufeff\u2060"
@@ -323,7 +323,8 @@ def is_red_packet(text: str) -> bool:
     """是否为红包消息（且仍有余额可领）。
     1) 命中可配关键词（OKPay 类：发送了一个红包 / 💵总金额）
     2) 结构识别：含算式 `X op Y = ?`——验证码红包文案千变万化
-    3) 排除已领完：文本含「剩余:0/N」→ 已无余额，直接跳过"""
+    3) 结构识别：含「验证码/答案/选择/领取」任一关键词（通用验证码红包，不依赖特定 bot）
+    4) 排除已领完：文本含「剩余:0/N」→ 已无余额，直接跳过"""
     t = text or ""
     # 已领完 → 不是可领红包
     if _EXHAUSTED_RE.search(t):
@@ -331,6 +332,9 @@ def is_red_packet(text: str) -> bool:
     if any(kw in t for kw in config.red_packet_keywords):
         return True
     if _MATH_RE.search(t):
+        return True
+    # 通用验证码红包门槛：不绑定任何钱包/bot 文案
+    if any(kw in t for kw in ("验证码", "答案", "请选择", "选择", "领取")):
         return True
     return False
 
@@ -407,26 +411,60 @@ def _collect_quiz_buttons(msg) -> list[tuple[str, bytes]]:
     return buttons
 
 
+# 验证码答案提取关键词（按优先级，越靠前优先级越高）
+_ANSWER_PATTERNS = [
+    r"验证码[:：\s]*([0-9A-Za-z]+)",
+    r"答案为[:：\s]*([0-9A-Za-z]+)",
+    r"答案[:：\s]*([0-9A-Za-z]+)",
+    r"请选择[:：\s]*([0-9A-Za-z]+)",
+    r"选择[:：\s]*([0-9A-Za-z]+)",
+    r"为[:：]\s*([0-9A-Za-z]+)",
+]
+
+
 def find_captcha_quiz(msg, decoded_text: str | None = None) -> tuple[str, list[tuple[str, bytes]]] | None:
     """验证码红包：文本含算式或明文验证码 + callback 按钮（数字或字母选项）。
     decoded_text: 已解码 custom emoji 后的文本（可选，未提供则用 raw_text）。
-    返回 (算式文本或明文数字, [(按钮标签, callback_data), ...]) 或 None。"""
+    返回 (算式文本或明文答案, [(按钮标签, callback_data), ...]) 或 None。
+
+    三层识别（任一命中即可，全部失败返回 None）：
+    1) 算式 X op Y = ?（数字或字母操作数）
+    2) 关键词引导的明文答案：验证码/答案/请选择/选择/为： ABC
+    3) 按钮反推（仅字母按钮，防与金额/剩余数字混淆）：
+       消息文本中第一个与按钮标签归一化后完全相等的 token 即答案"""
     text = decoded_text or getattr(msg, "text", None) or getattr(msg, "raw_text", None) or ""
-    
-    # 1. 尝试匹配算术题（如 1+1=?）
+    buttons = _collect_quiz_buttons(msg)
+    if not buttons:
+        return None
+
+    # 1) 算式 X op Y = ?
     m = _MATH_RE.search(text)
     if m:
-        expr = m.group(0)
-    else:
-        # 2. 尝试匹配 "请选择正确的验证码 1390" 这种明文数字
-        # 兼容 "验证码1390", "验证码 1390", "验证码：1390" 等格式
-        m2 = re.search(r"验证码[:：\s]*([0-9A-Za-z]+)", text)
-        if not m2:
-            return None
-        expr = m2.group(1)  # 提取出纯数字，如 "1390"
-        
-    buttons = _collect_quiz_buttons(msg)
-    return (expr, buttons) if buttons else None
+        return (m.group(0), buttons)
+
+    # 2) 关键词引导的明文答案（字母或数字）
+    for pat in _ANSWER_PATTERNS:
+        m2 = re.search(pat, text)
+        if m2:
+            return (m2.group(1), buttons)
+
+    # 3) 按钮反推：仅当按钮是纯字母选项时启用（数字按钮易与金额/剩余混淆）
+    if buttons_are_digit([l for l, _ in buttons]) is False:
+        # 归一化按钮标签，构造 {norm: (原label, data)} 表
+        btn_norm: dict[str, tuple[str, bytes]] = {}
+        for label, data in buttons:
+            n = normalize_operand(label).upper()
+            if n and n not in btn_norm:
+                btn_norm[n] = (label, data)
+        # 文本按非字母数字切 token，找第一个长度 ≥2 且命中按钮集合的
+        for tok in re.split(r"[^0-9A-Za-z]+", text):
+            if len(tok) < 2:
+                continue
+            n = normalize_operand(tok).upper()
+            if n in btn_norm:
+                return (n, buttons)
+
+    return None
 
 
 def find_fulilai(msg) -> tuple[str, str] | None:
