@@ -311,6 +311,11 @@ class OKPayGrabber:
 
         msg = event.message
 
+        # 诊断：有按钮的消息（疑似红包）打印到达日志
+        if getattr(msg, "reply_markup", None):
+            text = getattr(msg, "text", None) or getattr(msg, "raw_text", None) or ""
+            log.debug(f"📨 收到带按钮消息 chat_id={msg.chat_id} 文本={text[:60]!r}")
+
         # 屏蔽规则：私信/群/频道/用户/机器人 命中即忽略（不检测/不领取/不通知/不广播）
         block_reason = self._blocked(event, msg)
         if block_reason:
@@ -339,6 +344,12 @@ class OKPayGrabber:
             return
 
         if not rp:
+            # 诊断日志：有按钮但未被识别为红包时打印原因，方便排查文案不匹配
+            if getattr(msg, "reply_markup", None) and text:
+                from .config import config as _cfg
+                kw_hit = any(kw in text for kw in _cfg.red_packet_keywords)
+                log.info(f"🔍 未识别红包 [{chat_title}] chat_id={msg.chat_id} "
+                         f"关键词命中={kw_hit} 文本={text[:80]!r}")
             return
 
         if not self._chat_allowed(msg.chat_id):
