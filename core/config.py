@@ -26,7 +26,8 @@ def _parse_models(raw: str) -> list[tuple[str, str]]:
 def _parse_keywords(raw: str) -> list[str]:
     """解析 RED_PACKET_KEYWORDS：逗号分隔的关键词列表；缺省给 OKPay 标准文案。"""
     out = [item.strip() for item in (raw or "").split(",") if item.strip()]
-    return out or ["发送了一个红包", "💵总金额"]
+    return out or ["发送了一个红包", "💵总金额", "总金额", "红包个数",
+                   "验证码红包", "公开红包", "红包"]
 
 
 @dataclass
