@@ -22,8 +22,18 @@ const currencyMode = ref<"off" | "white" | "black">("off")
 const currencies = ref<string[]>([])
 const minRules = ref<MinRule[]>([])
 const skipConditions = ref<string[]>([])
+const blockWallets = ref<string[]>([])
+const blockTokens = ref("")
 
 const CURRENCY_SUGGESTIONS = ["USDT", "CNY", "KKCOIN", "WLCOIN", "JIBA", "TRX"]
+// 钱包黑名单可选项（与 core/detector.py WALLET_LABELS 对齐）
+const WALLET_OPTIONS = [
+  { value: "kkpay", label: "KKPay钱包" },
+  { value: "dlqb", label: "达利钱包" },
+  { value: "okpay", label: "OKPay钱包" },
+  { value: "wlqb", label: "未来钱包" },
+  { value: "fllqb", label: "福利来钱包" },
+]
 // 与 core/detector.py CONDITION_LABELS 对齐（locked 是状态不是条件，不在此列）
 const CONDITION_OPTIONS = [
   { value: "premium", label: "Premium会员" },
@@ -52,6 +62,12 @@ function applySettings(s: Settings) {
     .split(",")
     .map((c) => c.trim())
     .filter(Boolean)
+
+  blockWallets.value = (s.filter_block_wallets || "")
+    .split(",")
+    .map((c) => c.trim())
+    .filter(Boolean)
+  blockTokens.value = s.filter_block_tokens || ""
 
   minRules.value = []
   if (s.filter_min_amounts) {
@@ -135,6 +151,8 @@ async function saveFilters() {
         .join(","),
       filter_min_amounts: minAmounts,
       filter_skip_conditions: skipConditions.value.join(","),
+      filter_block_wallets: blockWallets.value.join(","),
+      filter_block_tokens: blockTokens.value,
     }
     applySettings(await api.updateSettings(payload))
     ElMessage.success("领取策略已保存，对运行中账号实时生效")
@@ -236,6 +254,29 @@ onMounted(load)
           <div class="hint">
             红包总金额低于下限时跳过，如 KKCOIN 填 100000 表示只抢十万以上的 KKCOIN 包；
             币种填 * 可对未单独设置的币种兜底。未识别出金额的红包不受影响。
+          </div>
+        </el-form-item>
+
+        <el-form-item label="钱包黑名单（强屏蔽）">
+          <el-checkbox-group v-model="blockWallets">
+            <el-checkbox v-for="w in WALLET_OPTIONS" :key="w.value" :value="w.value">
+              {{ w.label }}
+            </el-checkbox>
+          </el-checkbox-group>
+          <div class="hint">
+            命中钱包的红包直接跳过，不依赖文案/金额解析，最稳妥。例如勾上 KKPay钱包、达利钱包 即可彻底屏蔽这两家所有红包。
+          </div>
+        </el-form-item>
+
+        <el-form-item label="币种/代币关键词黑名单">
+          <el-input
+            v-model="blockTokens"
+            placeholder="逗号分隔，例如：kkcoin,kk币,jbcoin,jiba币"
+          />
+          <div class="hint">
+            扫描红包整条消息文本（含备注），命中任一关键词即跳过，大小写不敏感。
+            例如填 <b>kkcoin,kk币,jbcoin,jiba币</b> 可屏蔽 kkpay 的 kk 系列币和 dlqb 的鸡巴币，
+            不受红包备注里其它金额（如 10000u）干扰。
           </div>
         </el-form-item>
 

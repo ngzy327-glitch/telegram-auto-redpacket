@@ -113,6 +113,8 @@ class RunConfig:
     filter_currencies: set = None        # 币种集合（大写），配合 mode 使用
     filter_min_amounts: dict = None      # 币种→最低总金额；key '*' = 任意币种兜底
     filter_skip_conditions: set = None   # 跳过的条件类型 {premium,group,user,turnover,winloss}
+    filter_block_wallets: set = None     # 钱包黑名单 {kkpay,dlqb,...}：命中即跳过（最稳，不依赖文案）
+    filter_block_tokens: set = None      # 币种/代币关键词黑名单：全文本命中即跳过（kkcoin/kk币/jbcoin 等）
     # —— 屏蔽规则 + 代理（backend blocklist / 账号代理，保存即热更新）——
     proxy: str | None = None             # 账号代理 socks5://user:pass@host:port（None=直连）
     blocked_chat_ids: set = None         # 屏蔽的群/频道 chat_id
@@ -134,6 +136,10 @@ class RunConfig:
             self.filter_min_amounts = {}
         if self.filter_skip_conditions is None:
             self.filter_skip_conditions = set()
+        if self.filter_block_wallets is None:
+            self.filter_block_wallets = set()
+        if self.filter_block_tokens is None:
+            self.filter_block_tokens = set()
         if self.blocked_chat_ids is None:
             self.blocked_chat_ids = set()
         if self.blocked_sender_ids is None:

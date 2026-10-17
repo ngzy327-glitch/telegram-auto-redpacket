@@ -65,6 +65,8 @@ export interface Settings {
   filter_currencies: string // 逗号分隔币种（大写）
   filter_min_amounts: string // JSON 对象 {"USDT":1,"*":0.5}
   filter_skip_conditions: string // 逗号分隔条件类型
+  filter_block_wallets: string // 逗号分隔钱包标识 kkpay,dlqb,...
+  filter_block_tokens: string // 逗号分隔币种/代币关键词 kkcoin,kk币,jbcoin,...
 }
 
 export interface MonitoredGroup {

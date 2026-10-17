@@ -38,10 +38,17 @@ def parse_amount(amount_text: str | None) -> tuple[float | None, str | None]:
 def check_filters(rp, text: str, run) -> str | None:
     """按 RunConfig 中的领取策略检查红包。返回跳过原因（中文），None=放行。
 
-    rp:   detector.RedPacket（用 amount_text / conditions）
-    text: 消息文本（关键词匹配用）
+    rp:   detector.RedPacket（用 amount_text / conditions / wallet）
+    text: 消息文本（关键词/币种关键词匹配用）
     run:  RunConfig（filter_* 字段）
     """
+    # 0) 钱包黑名单：按已识别的钱包直接拦（最稳，不依赖文案/金额解析）
+    block_wallets: set = getattr(run, "filter_block_wallets", None) or set()
+    wallet = getattr(rp, "wallet", None)
+    if wallet and wallet in block_wallets:
+        from .detector import WALLET_LABELS
+        return f"钱包 {WALLET_LABELS.get(wallet, wallet)} 在黑名单"
+
     # 1) 关键词黑名单：原文 + 去反爬清洗后双重子串匹配
     keywords: list[str] = getattr(run, "filter_keywords", None) or []
     if keywords:
@@ -54,6 +61,20 @@ def check_filters(rp, text: str, run) -> str | None:
             ck = clean(k)
             if k in raw or (ck and ck in cleaned):
                 return f"命中关键词「{k}」"
+
+    # 1.5) 币种/代币关键词黑名单：扫描整条消息文本（独立于金额解析，
+    #      避免备注里的金额干扰币种识别）。大小写不敏感，去反爬清洗后子串匹配。
+    block_tokens: set = getattr(run, "filter_block_tokens", None) or set()
+    if block_tokens:
+        raw = (text or "").lower()
+        cleaned = clean(text or "").lower()
+        for tok in block_tokens:
+            t = (tok or "").strip().lower()
+            if not t:
+                continue
+            ct = clean(t)
+            if t in raw or (ct and ct in cleaned):
+                return f"命中币种关键词「{t}」"
 
     value, currency = parse_amount(getattr(rp, "amount_text", None))
 

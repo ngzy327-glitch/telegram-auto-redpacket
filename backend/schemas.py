@@ -79,6 +79,8 @@ class SettingsUpdate(BaseModel):
     filter_currencies: str | None = None      # 逗号分隔币种
     filter_min_amounts: str | None = None     # JSON {"USDT":1,"*":0.5}
     filter_skip_conditions: str | None = None  # 逗号分隔条件类型
+    filter_block_wallets: str | None = None    # 逗号分隔钱包标识 kkpay,dlqb,...
+    filter_block_tokens: str | None = None     # 逗号分隔币种/代币关键词 kkcoin,kk币,jbcoin,...
 
 
 # ---- 秒包群组 ----
