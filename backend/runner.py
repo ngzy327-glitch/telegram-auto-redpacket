@@ -176,6 +176,39 @@ class Runner:
             return await self.download_avatar(user_id)
         return None
 
+    async def resolve_username(self, username: str) -> tuple[int, str | None] | None:
+        """通过任一运行中账号的 Telethon 客户端解析 @用户名 → (数字 ID, 显示名)。
+
+        用于屏蔽规则：用户/机器人可填 @用户名，后端解析为数字 ID 后存储。
+        解析失败（用户名不存在 / 无在线账号）返回 None。
+        """
+        uname = username.strip().lstrip("@")
+        if not uname:
+            return None
+        for aid, info in self._runs.items():
+            if info["task"].done():
+                continue
+            client = info["grabber"].client
+            try:
+                entity = await client.get_entity(uname)
+            except Exception as e:
+                log.debug(f"账号 {aid} 解析用户名 @{uname} 失败: {e}")
+                continue
+            if not hasattr(entity, "id"):
+                continue
+            # 拼显示名：用户取 first_name + last_name，群组/频道取 title
+            name: str | None = None
+            fn = getattr(entity, "first_name", None)
+            if fn:
+                ln = getattr(entity, "last_name", None)
+                name = f"{fn} {ln}".strip() if ln else fn
+            else:
+                title = getattr(entity, "title", None)
+                if title:
+                    name = title
+            return int(entity.id), name
+        return None
+
     def hot_reload_disabled_groups(self, disabled_ids: set[int]):
         """热更新关闭秒包的群 ID 集合到所有运行中 grabber。"""
         count = 0

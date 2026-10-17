@@ -179,7 +179,7 @@ export const api = {
   getBlocklist: () => http.get<BlockList>("/blocklist").then((r) => r.data),
   addBlockRule: (rule: {
     target_type: BlockType
-    target_id: number
+    target_id: number | string
     target_name?: string | null
     note?: string | null
   }) => http.post<BlockRule>("/blocklist", rule).then((r) => r.data),
