@@ -33,9 +33,10 @@ log = logging.getLogger("core.webapp")
 
 
 async def solve_captcha_page(url, solver, browser=None, model=None, tag="",
-                             timings=None, debug=False) -> bool:
+                             timings=None, debug=False,
+                             api_key=None, base_url=None) -> bool:
     """打开验证页 → 注入标签 → 截图 → AI识别 → 按 data-index 点击 → 提交。
-    model 指定识别模型；tag 区分并发线路；timings 回填各阶段时间戳。"""
+    model/api_key/base_url 指定识别厂商；tag 区分并发线路；timings 回填各阶段时间戳。"""
     own_browser = browser is None
     browser_close = None
     if own_browser:
@@ -76,7 +77,7 @@ async def solve_captcha_page(url, solver, browser=None, model=None, tag="",
             timings["ready"] = time.time()
 
         # 4) AI 识别
-        clicks = await solver.solve(screenshot, model=model)
+        clicks = await solver.solve(screenshot, model=model, api_key=api_key, base_url=base_url)
         if not clicks:
             log.error(f"{tg}识别失败")
             return False
@@ -123,11 +124,20 @@ async def solve_captcha_page(url, solver, browser=None, model=None, tag="",
 class WebappClaimer:
     """网页验证红包领取器。browser 由调度方预启动并复用。"""
 
-    def __init__(self, client, solver, browser, models=None):
+    def __init__(self, client, solver, browser, models=None, providers=None):
         self.client = client
         self.solver = solver
         self.browser = browser
-        self.models = models or config.vision_models
+        # 多厂商并发优先（每模型独立 api_key+base_url）；
+        # 回退到旧 models（单厂商 model+tag 元组）
+        if providers:
+            self.providers = providers
+        elif models:
+            self.providers = [{"model": m, "tag": t, "api_key": None, "base_url": None}
+                               for m, t in models]
+        else:
+            self.providers = [{"model": m, "tag": t, "api_key": None, "base_url": None}
+                               for m, t in config.vision_models]
 
     @staticmethod
     def _classify(t: str):
@@ -181,8 +191,8 @@ class WebappClaimer:
                 return ClaimResult(False, retryable=True)
             tm["webview"] = time.time()
 
-            tasks = [self._pipeline(bot_entity, webview_url, model, tag)
-                     for model, tag in self.models]
+            tasks = [self._pipeline(bot_entity, webview_url, p)
+                     for p in self.providers]
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
             valid = [r for r in results if isinstance(r, dict)]
@@ -215,8 +225,13 @@ class WebappClaimer:
             return ClaimResult(True, None, winner, retryable=False)
         return ClaimResult(False, None, winner, retryable=False)
 
-    async def _pipeline(self, bot, webview_url, model, tag) -> dict:
-        """单条并发流水线：独立验证码 + 独立模型 + 独立浏览器页（用后即清理）。"""
+    async def _pipeline(self, bot, webview_url, provider) -> dict:
+        """单条并发流水线：独立验证码 + 独立厂商+模型 + 独立浏览器页（用后即清理）。
+        provider = {'model','tag','api_key','base_url'}"""
+        model = provider["model"]
+        tag = provider.get("tag") or model
+        api_key = provider.get("api_key") or None
+        base_url = provider.get("base_url") or None
         sub_tm: dict = {}
         try:
             res = await self.client(functions.messages.RequestWebViewRequest(
@@ -226,5 +241,6 @@ class WebappClaimer:
             log.error(f"[{tag}] RequestWebView失败: {e}")
             return {"tag": tag, "ok": False, "submit": None}
         ok = await solve_captcha_page(
-            res.url, self.solver, self.browser, model=model, tag=tag, timings=sub_tm)
+            res.url, self.solver, self.browser, model=model, tag=tag, timings=sub_tm,
+            api_key=api_key, base_url=base_url)
         return {"tag": tag, "ok": ok, "submit": sub_tm.get("submit")}

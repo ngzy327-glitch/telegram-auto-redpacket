@@ -69,6 +69,7 @@ class SettingsUpdate(BaseModel):
     vision_base_url: str | None = None
     vision_model: str | None = None
     vision_models: str | None = None
+    vision_providers_json: str | None = None   # 多厂商并发配置（JSON 数组）
     max_attempts: int | str | None = None
     notify_bot_token: str | None = None
     direct_keywords: str | None = None

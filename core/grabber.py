@@ -148,7 +148,9 @@ class OKPayGrabber:
             log.debug(f"通知绑定失败: {e}")
         try:
             self._browser, self._browser_close = await launch_browser(self.run.chrome_path)
-            self._webapp = WebappClaimer(self.client, self.solver, self._browser, self.run.vision_models)
+            self._webapp = WebappClaimer(self.client, self.solver, self._browser,
+                                          models=self.run.vision_models,
+                                          providers=self.run.vision_providers)
             log.debug(f"🟢 就绪（模块: {self.run.modules}）")
         except Exception as e:
             log.warning(f"浏览器启动失败（webapp 模块不可用）: {e}")

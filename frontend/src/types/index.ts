@@ -55,6 +55,7 @@ export interface Settings {
   vision_base_url: string
   vision_model: string
   vision_models: string
+  vision_providers_json: string   // 多厂商并发配置（JSON 数组，留空用单厂商）
   max_attempts: string
   notify_bot_token: string
   direct_keywords: string

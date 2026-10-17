@@ -47,26 +47,44 @@ class CaptchaSolver:
     def __init__(self, api_key: str | None = None, base_url: str | None = None,
                  model: str | None = None):
         self.model = model or config.vision_model
-        key = api_key if api_key is not None else config.vision_api_key
-        base = base_url or config.vision_base_url
-        self.client: AsyncOpenAI | None = None
-        if key:
-            self.client = AsyncOpenAI(api_key=key, base_url=base, timeout=15.0)
-            logger.debug(f"视觉API: {self.model}")
+        self.default_key = api_key if api_key is not None else config.vision_api_key
+        self.default_base = base_url or config.vision_base_url
+        # 多厂商客户端池：(api_key, base_url) → AsyncOpenAI
+        # 每个厂商独立连接，避免单厂商限流和跨厂商 base_url 切换开销
+        self._clients: dict[tuple[str, str], AsyncOpenAI] = {}
+        if self.default_key:
+            self._clients[(self.default_key, self.default_base)] = AsyncOpenAI(
+                api_key=self.default_key, base_url=self.default_base, timeout=15.0)
+            logger.debug(f"视觉API(默认): {self.model} @ {self.default_base}")
         else:
-            logger.warning("未配置 VISION_API_KEY")
+            logger.warning("未配置 VISION_API_KEY（默认厂商）")
 
-    async def solve(self, image_data: bytes, model: str | None = None) -> list[int] | None:
+    def _get_client(self, api_key: str | None, base_url: str | None) -> AsyncOpenAI | None:
+        """按 (api_key, base_url) 复用客户端；缺省回退到默认厂商。"""
+        key = api_key or self.default_key
+        base = base_url or self.default_base
+        if not key:
+            return None
+        ck = (key, base)
+        if ck not in self._clients:
+            self._clients[ck] = AsyncOpenAI(api_key=key, base_url=base, timeout=15.0)
+            logger.debug(f"视觉API(新厂商): {base}")
+        return self._clients[ck]
+
+    async def solve(self, image_data: bytes, model: str | None = None,
+                    api_key: str | None = None, base_url: str | None = None) -> list[int] | None:
         """识别已注入编号标签的验证码截图，返回 3 个要点击的 data-index。
-        model 可指定具体模型（用于多模型并发），默认本实例模型。"""
-        if not self.client:
+        model/api_key/base_url 可指定具体厂商（多厂商并发），缺省用本实例配置。"""
+        client = self._get_client(api_key, base_url)
+        if not client:
             return None
 
         model = model or self.model
         img_b64 = base64.b64encode(image_data).decode()
         try:
             # extra_body 禁用 thinking（qwen3.6+ 默认开启会输出长篇分析拖慢响应）
-            resp = await self.client.chat.completions.create(
+            # 非通义厂商会忽略 extra_body，不影响
+            resp = await client.chat.completions.create(
                 model=model,
                 messages=[{
                     "role": "user",

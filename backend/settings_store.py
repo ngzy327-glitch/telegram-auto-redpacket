@@ -15,12 +15,11 @@ log = logging.getLogger("backend.settings")
 
 # 全局设置（系统配置页）
 SETTING_KEYS = ["vision_api_key", "vision_base_url", "vision_model",
-                "vision_models", "max_attempts", "notify_bot_token",
-                "direct_keywords", "capmonster_key",
+                "vision_models", "vision_providers_json", "max_attempts", "notify_bot_token",
+                "direct_keywords", "twocaptcha_key",
                 # 领取策略过滤（core/filters.py）
                 "filter_keywords", "filter_currency_mode", "filter_currencies",
                 "filter_min_amounts", "filter_skip_conditions",
-                "filter_block_wallets", "filter_block_tokens",
                 # 屏蔽：私信总开关（群/频道/用户/机器人走 block_rules 表）
                 "block_private"]
 
@@ -44,12 +43,15 @@ MODULE_CONFIG_FIELDS: dict[str, list[dict]] = {
          "hint": "OpenAI 兼容端点"},
         {"key": "vision_model", "label": "主模型", "type": "text",
          "hint": "单次识别默认模型，如 qwen3-vl-flash"},
-        {"key": "vision_models", "label": "并发模型列表", "type": "text",
+        {"key": "vision_models", "label": "并发模型列表（单厂商）", "type": "text",
          "hint": "多模型并发，格式 model:tag 逗号分隔。如 qwen3-vl-flash:flash,qwen3-vl-plus:plus"},
+        {"key": "vision_providers_json", "label": "多厂商并发配置（JSON）", "type": "textarea",
+         "hint": "JSON 数组，每项 {model,tag,api_key,base_url}。填写后覆盖上面的单厂商配置。"
+                 "示例见仓库 README 或 vision_providers.json.example。留空则用单厂商配置。"},
     ],
     "fulilai": [
-        {"key": "capmonster_key", "label": "CapMonster API Key", "type": "password",
-         "hint": "福利来红包 hCaptcha 打码服务密钥（https://dash.capmonster.cloud），不填则模块不生效"},
+        {"key": "twocaptcha_key", "label": "2captcha API Key", "type": "password",
+         "hint": "福利来红包 hCaptcha 打码服务密钥，不填则模块不生效"},
         {"key": "pool_size", "label": "候选 Token 数量", "type": "text",
          "hint": "后台维持的 hCaptcha token 数量（默认 1，越多响应越快但越费钱）"},
         {"key": "pool_enabled", "label": "打码池开关", "type": "switch",
@@ -77,18 +79,17 @@ def _defaults() -> dict:
         "vision_base_url": config.vision_base_url,
         "vision_model": config.vision_model,
         "vision_models": _models_to_str(config.vision_models),
+        "vision_providers_json": "",   # 留空=用 vision_models 单厂商；填 JSON=多厂商并发
         "max_attempts": str(config.max_attempts),
         "notify_bot_token": config.notify_bot_token,
         "direct_keywords": "领取",
-        "capmonster_key": "",
+        "twocaptcha_key": "",
         # 领取策略过滤：默认全部不启用
         "filter_keywords": "",        # 换行分隔
         "filter_currency_mode": "off",  # off|white|black
         "filter_currencies": "",      # 逗号分隔，大写
         "filter_min_amounts": "",     # JSON 对象 {"USDT":1,"*":0.5}
         "filter_skip_conditions": "",  # 逗号分隔 premium,turnover,...
-        "filter_block_wallets": "",    # 逗号分隔钱包标识 kkpay,dlqb,...
-        "filter_block_tokens": "",     # 逗号分隔币种/代币关键词 kkcoin,kk币,jbcoin,...
         "block_private": "0",         # 屏蔽所有私信红包（"1" 开）
     }
 
@@ -139,19 +140,12 @@ def parse_filter_settings(s: dict) -> dict:
     skip_conds = {c.strip() for c in (s.get("filter_skip_conditions") or "").split(",")
                   if c.strip()} & _VALID_CONDITIONS
 
-    block_wallets = {w.strip().lower() for w in (s.get("filter_block_wallets") or "").split(",")
-                     if w.strip()}
-    block_tokens = {t.strip() for t in (s.get("filter_block_tokens") or "").split(",")
-                    if t.strip()}
-
     return {
         "filter_keywords": keywords,
         "filter_currency_mode": mode,
         "filter_currencies": currencies,
         "filter_min_amounts": mins,
         "filter_skip_conditions": skip_conds,
-        "filter_block_wallets": block_wallets,
-        "filter_block_tokens": block_tokens,
     }
 
 
@@ -189,7 +183,7 @@ async def _migrate_to_module_configs(session):
         "mod.captcha.vision_api_key": gs.get("vision_api_key", ""),
         "mod.captcha.vision_base_url": gs.get("vision_base_url", ""),
         "mod.captcha.vision_model": gs.get("vision_model", ""),
-        "mod.fulilai.capmonster_key": gs.get("capmonster_key", "") or gs.get("twocaptcha_key", ""),
+        "mod.fulilai.twocaptcha_key": gs.get("twocaptcha_key", ""),
     }
     added = False
     for k, v in migrations.items():
@@ -333,10 +327,29 @@ async def build_runconfig(session, account) -> RunConfig:
     vision_model = (webapp_cfg.get("vision_model")
                     or s.get("vision_model", "") or config.vision_model)
     vision_models_raw = webapp_cfg.get("vision_models") or s.get("vision_models", "")
+    # 多厂商并发配置（JSON）：模块级 → 全局 → vision_providers.json 文件 → 回退单厂商
+    vision_providers_raw = (webapp_cfg.get("vision_providers_json")
+                            or s.get("vision_providers_json", ""))
+    vision_providers: list[dict] = []
+    if vision_providers_raw.strip():
+        try:
+            data = json.loads(vision_providers_raw)
+            if isinstance(data, list):
+                for item in data:
+                    if isinstance(item, dict) and (item.get("model") or "").strip():
+                        vision_providers.append({
+                            "model": item["model"].strip(),
+                            "tag": (item.get("tag") or item["model"]).strip(),
+                            "api_key": (item.get("api_key") or "").strip(),
+                            "base_url": (item.get("base_url") or "").strip(),
+                        })
+        except json.JSONDecodeError as e:
+            log.warning(f"vision_providers_json 解析失败，回退默认: {e}")
+    if not vision_providers:
+        vision_providers = list(config.vision_providers)
 
-    # fulilai capmonster key（模块级 → 全局，兼容旧键 twocaptcha_key）
-    capmonster = (fulilai_cfg.get("capmonster_key") or fulilai_cfg.get("twocaptcha_key")
-                  or s.get("capmonster_key", "") or s.get("twocaptcha_key", ""))
+    # fulilai 2captcha key（模块级 → 全局）
+    twocaptcha = fulilai_cfg.get("twocaptcha_key") or s.get("twocaptcha_key", "")
 
     try:
         max_att = int(s.get("max_attempts") or config.max_attempts)
@@ -353,6 +366,7 @@ async def build_runconfig(session, account) -> RunConfig:
         vision_base_url=vision_base,
         vision_model=vision_model,
         vision_models=_parse_models(vision_models_raw),
+        vision_providers=vision_providers,
         max_attempts=max_att,
         notify_bot_token=s.get("notify_bot_token", ""),
         chrome_path=config.chrome_path,
@@ -363,7 +377,7 @@ async def build_runconfig(session, account) -> RunConfig:
             "webapp": mods.get("webapp", True),
             "fulilai": mods.get("fulilai", True),
         },
-        capmonster_key=capmonster,
+        twocaptcha_key=twocaptcha,
         direct_keywords=direct_kw,
         disabled_chat_ids=disabled_ids,
         monitor_enabled=getattr(account, "monitor_enabled", True),
