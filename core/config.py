@@ -55,9 +55,7 @@ class Config:
     browser_backend: str = os.getenv("BROWSER_BACKEND", "playwright")
     headless: bool = (os.getenv("HEADLESS", "true").lower() != "false")
     # 指定浏览器可执行文件；留空=用所选后端自带 chromium（服务器/Linux 推荐留空）
-    chrome_path: str = os.getenv(
-        "CHROME_PATH",
-        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+    chrome_path: str = os.getenv("CHROME_PATH", "")
 
     # —— Web 服务 ——
     host: str = os.getenv("HOST", "127.0.0.1")
