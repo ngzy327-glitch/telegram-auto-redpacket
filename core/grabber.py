@@ -721,23 +721,38 @@ class OKPayGrabber:
                     break
 
     @staticmethod
-    def _msg_link(msg) -> str:
-        """构造消息链接 https://t.me/c/{chat_id}/{msg_id}。"""
-        cid = msg.chat_id
-        if cid and cid < 0:
-            cid_str = str(cid).replace("-100", "")
+    def _build_msg_link(chat_id: int | None, msg_id: int | None) -> str:
+        """构造 Telegram 消息直达链接 https://t.me/c/{chat_id}/{msg_id}。
+
+        超级群/频道的 chat_id 形如 -1001234567890，链接需去掉 -100 前缀。
+        仅对超级群/频道有效（红包几乎都在群里）；私聊返回空串。
+        """
+        if not chat_id or not msg_id:
+            return ""
+        cid_str = str(chat_id)
+        if cid_str.startswith("-100"):
+            cid_str = cid_str[4:]
+        elif chat_id < 0:
+            # 基础群（非超级群）：Telegram 不支持 t.me/c/ 直达，留空
+            return ""
         else:
-            cid_str = str(cid or 0)
-        return f"https://t.me/c/{cid_str}/{msg.id}"
+            # 私聊：无直达消息链接
+            return ""
+        return f"https://t.me/c/{cid_str}/{msg_id}"
+
+    @staticmethod
+    def _msg_link(msg) -> str:
+        """从消息对象构造直达链接（兼容旧调用）。"""
+        return OKPayGrabber._build_msg_link(getattr(msg, "chat_id", None), getattr(msg, "id", None))
 
     async def _report_simple(self, chat_title, rp, r, tm, chat_id=None, msg_id=None):
-        """无消息对象的报告（webapp 快路径用）。"""
+        """无消息对象的报告（webapp/dm_captcha 快路径用）。"""
         report = build_report(rp, r.ok, r.amount, r.winner, tm, chat_title)
         log.info(report.replace("\n", " ｜ "))
         account_name = self.me.first_name if self.me else ""
-        
-        link = f"https://t.me/c/{str(chat_id).replace('-100', '')}/{msg_id}" if chat_id and msg_id else ""
-        
+
+        link = self._build_msg_link(chat_id, msg_id)
+
         record = {
             "ts": time.time(), "chat": chat_title,
             "target_bot": f"@{rp.webapp_bot}" if rp.webapp_bot else "",
@@ -747,6 +762,7 @@ class OKPayGrabber:
             "ok": r.ok, "amount": r.amount, "winner": r.winner,
             "total_s": round(tm.get("done", 0) - tm.get("detect", 0), 2),
             "report": report,
+            "link": link,
         }
         self.history.appendleft(record)
         if self.on_record:
@@ -754,8 +770,8 @@ class OKPayGrabber:
                 await self.on_record(record)
             except Exception:
                 pass
-        
-        # 【修改】拼接群组ID、金额、消息链接
+
+        # 通知追加：群组ID + 领取金额 + 消息直达链接
         push_report = report
         if chat_id:
             push_report += f"\n群组ID: {chat_id}"
@@ -763,13 +779,13 @@ class OKPayGrabber:
             push_report += f"\n领取金额: {r.amount}"
         if link:
             push_report += f"\n消息链接: {link}"
-        
-        # 只有明确反馈了金额才发送通知
+
+        # 点击按钮成功 ≠ 真正领到：只有反馈中解析出金额才推送通知
         if r.ok and r.amount:
             if not await self.notifier.send(push_report):
                 log.debug("通知未发出")
-        elif r.ok and not r.amount:
-            log.debug("跳过通知：领取成功但未解析出金额")
+        elif r.ok:
+            log.debug("跳过通知：按钮点击成功但未解析到金额")
         else:
             log.debug("跳过通知：领取失败")
 
@@ -800,8 +816,8 @@ class OKPayGrabber:
                 await self.on_record(record)
             except Exception as e:
                 log.debug(f"记录持久化失败: {e}")
-                
-        # 【修改】拼接群组ID、金额、消息链接
+
+        # 通知追加：群组ID + 领取金额 + 消息直达链接
         push_report = report
         cid = getattr(msg, "chat_id", None)
         if cid:
@@ -810,12 +826,12 @@ class OKPayGrabber:
             push_report += f"\n领取金额: {r.amount}"
         if link:
             push_report += f"\n消息链接: {link}"
-                
-        # 只有明确反馈了金额才发送通知
+
+        # 点击按钮成功 ≠ 真正领到：只有反馈中解析出金额才推送通知
         if r.ok and r.amount:
             if not await self.notifier.send(push_report):
                 log.debug("通知未发出")
-        elif r.ok and not r.amount:
-            log.debug("跳过通知：领取成功但未解析出金额")
+        elif r.ok:
+            log.debug("跳过通知：按钮点击成功但未解析到金额")
         else:
             log.debug("跳过通知：领取失败")
