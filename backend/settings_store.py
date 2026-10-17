@@ -15,7 +15,7 @@ log = logging.getLogger("backend.settings")
 
 # 全局设置（系统配置页）
 SETTING_KEYS = ["vision_api_key", "vision_base_url", "vision_model",
-                "vision_models", "max_attempts", "notify_bot_token",
+                "vision_models", "vision_providers_json", "max_attempts", "notify_bot_token",
                 "direct_keywords", "twocaptcha_key",
                 # 领取策略过滤（core/filters.py）
                 "filter_keywords", "filter_currency_mode", "filter_currencies",
@@ -43,8 +43,11 @@ MODULE_CONFIG_FIELDS: dict[str, list[dict]] = {
          "hint": "OpenAI 兼容端点"},
         {"key": "vision_model", "label": "主模型", "type": "text",
          "hint": "单次识别默认模型，如 qwen3-vl-flash"},
-        {"key": "vision_models", "label": "并发模型列表", "type": "text",
+        {"key": "vision_models", "label": "并发模型列表（单厂商）", "type": "text",
          "hint": "多模型并发，格式 model:tag 逗号分隔。如 qwen3-vl-flash:flash,qwen3-vl-plus:plus"},
+        {"key": "vision_providers_json", "label": "多厂商并发配置（JSON）", "type": "textarea",
+         "hint": "JSON 数组，每项 {model,tag,api_key,base_url}。填写后覆盖上面的单厂商配置。"
+                 "示例见仓库 README 或 vision_providers.json.example。留空则用单厂商配置。"},
     ],
     "fulilai": [
         {"key": "twocaptcha_key", "label": "2captcha API Key", "type": "password",
@@ -76,6 +79,7 @@ def _defaults() -> dict:
         "vision_base_url": config.vision_base_url,
         "vision_model": config.vision_model,
         "vision_models": _models_to_str(config.vision_models),
+        "vision_providers_json": "",   # 留空=用 vision_models 单厂商；填 JSON=多厂商并发
         "max_attempts": str(config.max_attempts),
         "notify_bot_token": config.notify_bot_token,
         "direct_keywords": "领取",
@@ -323,6 +327,26 @@ async def build_runconfig(session, account) -> RunConfig:
     vision_model = (webapp_cfg.get("vision_model")
                     or s.get("vision_model", "") or config.vision_model)
     vision_models_raw = webapp_cfg.get("vision_models") or s.get("vision_models", "")
+    # 多厂商并发配置（JSON）：模块级 → 全局 → vision_providers.json 文件 → 回退单厂商
+    vision_providers_raw = (webapp_cfg.get("vision_providers_json")
+                            or s.get("vision_providers_json", ""))
+    vision_providers: list[dict] = []
+    if vision_providers_raw.strip():
+        try:
+            data = json.loads(vision_providers_raw)
+            if isinstance(data, list):
+                for item in data:
+                    if isinstance(item, dict) and (item.get("model") or "").strip():
+                        vision_providers.append({
+                            "model": item["model"].strip(),
+                            "tag": (item.get("tag") or item["model"]).strip(),
+                            "api_key": (item.get("api_key") or "").strip(),
+                            "base_url": (item.get("base_url") or "").strip(),
+                        })
+        except json.JSONDecodeError as e:
+            log.warning(f"vision_providers_json 解析失败，回退默认: {e}")
+    if not vision_providers:
+        vision_providers = list(config.vision_providers)
 
     # fulilai 2captcha key（模块级 → 全局）
     twocaptcha = fulilai_cfg.get("twocaptcha_key") or s.get("twocaptcha_key", "")
@@ -342,6 +366,7 @@ async def build_runconfig(session, account) -> RunConfig:
         vision_base_url=vision_base,
         vision_model=vision_model,
         vision_models=_parse_models(vision_models_raw),
+        vision_providers=vision_providers,
         max_attempts=max_att,
         notify_bot_token=s.get("notify_bot_token", ""),
         chrome_path=config.chrome_path,

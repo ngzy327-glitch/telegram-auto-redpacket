@@ -1,4 +1,5 @@
 """集中配置：从 .env 读取，供核心引擎与 Web 后端共享。"""
+import json
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -26,7 +27,46 @@ def _parse_models(raw: str) -> list[tuple[str, str]]:
 def _parse_keywords(raw: str) -> list[str]:
     """解析 RED_PACKET_KEYWORDS：逗号分隔的关键词列表；缺省给 OKPay 标准文案。"""
     out = [item.strip() for item in (raw or "").split(",") if item.strip()]
-    return out or ["发送了一个红包", "💵总金额"]
+    return out or ["发送了一个红包", "💵总金额", "总金额", "红包个数",
+                   "验证码红包", "公开红包", "红包"]
+
+
+def _load_vision_providers(models_fallback: list[tuple[str, str]],
+                           default_api_key: str, default_base_url: str) -> list[dict]:
+    """加载多厂商视觉模型配置：每模型独立 (api_key, base_url)。
+
+    优先级：
+    1. vision_providers.json 文件（多厂商并发）
+    2. 回退到 VISION_MODELS + 默认 api_key/base_url（单厂商兼容）
+
+    返回 [{'model','tag','api_key','base_url'}]。
+    """
+    providers_file = ROOT / os.getenv("VISION_PROVIDERS_FILE", "vision_providers.json")
+    if providers_file.exists():
+        try:
+            data = json.loads(providers_file.read_text(encoding="utf-8"))
+            if isinstance(data, list):
+                out = []
+                for item in data:
+                    if not isinstance(item, dict):
+                        continue
+                    model = (item.get("model") or "").strip()
+                    if not model:
+                        continue
+                    tag = (item.get("tag") or "").strip() or model
+                    api_key = (item.get("api_key") or "").strip()
+                    base_url = (item.get("base_url") or "").strip()
+                    out.append({"model": model, "tag": tag,
+                                "api_key": api_key, "base_url": base_url})
+                if out:
+                    return out
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    # 回退：把 VISION_MODELS + 默认厂商展开为 providers
+    return [{"model": m, "tag": t,
+             "api_key": default_api_key, "base_url": default_base_url}
+            for m, t in models_fallback]
 
 
 @dataclass
@@ -55,6 +95,14 @@ class Config:
     # 多模型并发（任一识别成功即领取，互不冲突）
     vision_models: list[tuple[str, str]] = field(
         default_factory=lambda: _parse_models(os.getenv("VISION_MODELS", "")))
+    # 多厂商视觉模型并发：每个模型独立 api_key + base_url（vision_providers.json）
+    # 文件不存在时回退到 vision_models + 默认 api_key/base_url（单厂商兼容）
+    vision_providers: list[dict] = field(
+        default_factory=lambda: _load_vision_providers(
+            _parse_models(os.getenv("VISION_MODELS", "")),
+            os.getenv("VISION_API_KEY", ""),
+            os.getenv("VISION_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+        ))
 
     # —— 浏览器（验证码页面用）——
     # backend: playwright(自带 chromium) | cloak(cloakbrowser 反检测, 需 pip install cloakbrowser)
@@ -102,6 +150,7 @@ class RunConfig:
     chrome_path: str
     modules: dict                        # {'direct': bool, 'captcha': bool, 'webapp': bool, 'fulilai': bool}
     direct_keywords: list[str] = None    # 直接领取按钮匹配关键词（子串匹配）
+    vision_providers: list[dict] = None  # [{'model','tag','api_key','base_url'}]：多厂商并发
     twocaptcha_key: str = ""             # 2captcha API key（福利来 hCaptcha 用）
     disabled_chat_ids: set[int] = None   # 关闭了秒包的 chat_id 集合（不在集合内=默认开启）
     monitor_enabled: bool = True         # 是否监控红包消息
@@ -126,6 +175,8 @@ class RunConfig:
             self.disabled_chat_ids = set()
         if self.module_configs is None:
             self.module_configs = {}
+        if self.vision_providers is None:
+            self.vision_providers = []
         if self.filter_keywords is None:
             self.filter_keywords = []
         if self.filter_currencies is None:
@@ -145,6 +196,7 @@ class RunConfig:
             api_id=config.api_id, api_hash=config.api_hash, session=session,
             vision_api_key=config.vision_api_key, vision_base_url=config.vision_base_url,
             vision_model=config.vision_model, vision_models=list(config.vision_models),
+            vision_providers=list(config.vision_providers),
             max_attempts=config.max_attempts, notify_bot_token=config.notify_bot_token,
             chrome_path=config.chrome_path,
             modules={"direct": True, "captcha": True, "webapp": True, "fulilai": True},
