@@ -1,7 +1,9 @@
 # 环境与凭据
 .env
+.env.local
 *.session
 *.session-journal
+vision_providers.json
 
 # Python
 __pycache__/
