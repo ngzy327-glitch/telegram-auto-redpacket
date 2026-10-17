@@ -106,7 +106,7 @@ async function submitAdd() {
   try {
     await api.addBlockRule({
       target_type: form.target_type,
-      target_id: finalTargetId as any, // 使用 as any 绕过前端类型限制，后端已支持字符串
+      target_id: finalTargetId,
       target_name: form.target_name.trim() || null,
       note: form.note.trim() || null,
     })

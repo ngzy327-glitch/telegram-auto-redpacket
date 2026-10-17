@@ -48,19 +48,38 @@ async def list_rules(s: AsyncSession = Depends(get_session)):
 async def add_rule(body: BlockRuleIn, s: AsyncSession = Depends(get_session)):
     if body.target_type not in _VALID_TYPES:
         raise HTTPException(400, "屏蔽类型不合法（应为 群组/频道/用户/机器人）")
-    if not body.target_id:
+    if body.target_id is None or (isinstance(body.target_id, str) and not body.target_id.strip()):
         raise HTTPException(400, "缺少屏蔽目标 ID")
+
+    target_id = body.target_id
+    target_name = body.target_name
+
+    # 用户 / 机器人：允许填 @用户名，解析为数字 ID 后存储
+    if body.target_type in ("user", "bot") and isinstance(target_id, str):
+        resolved = await runner.resolve_username(target_id)
+        if resolved is None:
+            raise HTTPException(
+                400,
+                f"无法解析用户名 {target_id}：请确认用户名正确，且至少有一个账号处于监听状态")
+        target_id, resolved_name = resolved
+        if not target_name:
+            target_name = resolved_name or target_id.strip().lstrip("@")
+
+    # 群组 / 频道：必须是数字 ID（负数）
+    if body.target_type in ("group", "channel") and isinstance(target_id, str):
+        raise HTTPException(400, "群组/频道屏蔽需填写数字 ID（如 -100xxxx）")
+
     existing = (await s.execute(select(BlockRule).where(
         BlockRule.target_type == body.target_type,
-        BlockRule.target_id == body.target_id))).scalar_one_or_none()
+        BlockRule.target_id == int(target_id)))).scalar_one_or_none()
     if existing:
-        existing.target_name = body.target_name or existing.target_name
+        existing.target_name = target_name or existing.target_name
         if body.note is not None:
             existing.note = body.note
         row = existing
     else:
-        row = BlockRule(target_type=body.target_type, target_id=body.target_id,
-                        target_name=body.target_name, note=body.note)
+        row = BlockRule(target_type=body.target_type, target_id=int(target_id),
+                        target_name=target_name, note=body.note)
         s.add(row)
     await s.commit()
     await s.refresh(row)
