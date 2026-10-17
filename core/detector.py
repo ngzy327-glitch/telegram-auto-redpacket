@@ -59,6 +59,7 @@ WALLET_BOTS: dict[int, str] = {
     8656187862: "wlqb",     # @HtjiamiBOT
     7826631206: "dlqb",
     5495837487: "fllqb",    # @fllqb 福利来
+    8721454389: "tcqb",     # 汤臣钱包
 }
 
 # bot username（小写）→ 钱包标识；用于无 via_bot/from 时从 URL 按钮兜底识别
