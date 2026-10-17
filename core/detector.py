@@ -22,7 +22,15 @@ import unicodedata
 from dataclasses import dataclass, field
 from urllib.parse import parse_qs, urlparse
 
-from telethon.tl.types import KeyboardButtonCallback, KeyboardButtonUrl
+from telethon.tl import types
+
+# telethon 1.45+ 把 KeyboardButtonCallback/Url 重命名为 InlineButtonType*，做兼容
+try:
+    KeyboardButtonCallback = types.KeyboardButtonCallback
+    KeyboardButtonUrl = types.KeyboardButtonUrl
+except AttributeError:
+    KeyboardButtonCallback = types.InlineButtonTypeCallback
+    KeyboardButtonUrl = types.InlineButtonTypeUrl
 
 from .charset import MATH_RE as _MATH_RE
 from .config import config

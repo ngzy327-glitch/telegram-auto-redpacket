@@ -32,8 +32,9 @@ from core.config import config
 from core.crypto import encrypt_session
 from core.notifier import Notifier
 
+from ..auth import get_current_user
 from ..db import SessionLocal, get_session
-from ..models import Account
+from ..models import Account, User
 from ..runner import runner
 from ..schemas import (
     AccountOut,
@@ -79,7 +80,7 @@ def _out(acc: Account) -> AccountOut:
     )
 
 
-async def _save_account(client: TelegramClient, s: AsyncSession) -> Account:
+async def _save_account(client: TelegramClient, s: AsyncSession, owner_id: int | None = None) -> Account:
     """从已登录 client 提取用户信息，绑定通知 bot，加密 session 后存入/更新 DB。"""
     me = await client.get_me()
     session_string = client.session.save()
@@ -92,8 +93,11 @@ async def _save_account(client: TelegramClient, s: AsyncSession) -> Account:
         select(Account).where(Account.phone == phone)
     )).scalar_one_or_none()
     if acc is None:
-        acc = Account(phone=phone)
+        acc = Account(phone=phone, owner_id=owner_id)
         s.add(acc)
+    elif owner_id is not None and acc.owner_id is None:
+        # 已存在但无主的账号，归属给当前用户（管理员登录旧账号时）
+        acc.owner_id = owner_id
     acc.user_id = me.id
     acc.name = me.first_name
     acc.username = me.username
@@ -141,8 +145,12 @@ async def _bind_notify_bot(client: TelegramClient, me):
 
 
 @router.get("", response_model=list[AccountOut])
-async def list_accounts(s: AsyncSession = Depends(get_session)):
-    accs = (await s.execute(select(Account).order_by(Account.id))).scalars().all()
+async def list_accounts(user: User = Depends(get_current_user),
+                        s: AsyncSession = Depends(get_session)):
+    q = select(Account)
+    if not user.is_admin:
+        q = q.where(Account.owner_id == user.id)
+    accs = (await s.execute(q.order_by(Account.id))).scalars().all()
     return [_out(a) for a in accs]
 
 
@@ -175,8 +183,15 @@ async def _avatar_db_get(account_id: int) -> tuple[Account | None, bytes | None]
 
 
 @router.get("/{account_id}/avatar")
-async def get_account_avatar(account_id: int):
+async def get_account_avatar(account_id: int, user: User = Depends(get_current_user),
+                             s: AsyncSession = Depends(get_session)):
     """账号头像懒加载：Redis → DB → telethon 下载，逐层回填。"""
+    # 校验所有权
+    acc_check = await s.get(Account, account_id)
+    if not acc_check:
+        raise HTTPException(404, "账号不存在")
+    if not user.is_admin and acc_check.owner_id != user.id:
+        raise HTTPException(403, "无权查看此账号")
     key = f"avatar:acct:{account_id}"
     try:
         rv = await cache.get(key)
@@ -226,7 +241,7 @@ async def get_account_avatar(account_id: int):
 
 
 @router.post("/login/start")
-async def login_start(body: LoginStart):
+async def login_start(body: LoginStart, user: User = Depends(get_current_user)):
     phone = body.phone.strip()
     if not config.api_id or not config.api_hash:
         raise HTTPException(400, "未配置 API_ID / API_HASH")
@@ -250,7 +265,8 @@ async def login_start(body: LoginStart):
 
 
 @router.post("/login/code")
-async def login_code(body: LoginCode, s: AsyncSession = Depends(get_session)):
+async def login_code(body: LoginCode, user: User = Depends(get_current_user),
+                     s: AsyncSession = Depends(get_session)):
     phone = body.phone.strip()
     p = _pending.get(phone)
     if not p:
@@ -268,11 +284,12 @@ async def login_code(body: LoginCode, s: AsyncSession = Depends(get_session)):
     except Exception as e:
         log.error("login/code 失败: %s (type=%s)", e, type(e).__name__)
         raise HTTPException(400, f"验证码错误: {e}")
-    return await _finish_phone(phone, p["client"], s)
+    return await _finish_phone(phone, p["client"], s, user.id)
 
 
 @router.post("/login/password")
-async def login_password(body: LoginPassword, s: AsyncSession = Depends(get_session)):
+async def login_password(body: LoginPassword, user: User = Depends(get_current_user),
+                         s: AsyncSession = Depends(get_session)):
     phone = body.phone.strip()
     p = _pending.get(phone)
     if not p:
@@ -281,11 +298,11 @@ async def login_password(body: LoginPassword, s: AsyncSession = Depends(get_sess
         await p["client"].sign_in(password=body.password)
     except Exception as e:
         raise HTTPException(400, f"两步验证失败: {e}")
-    return await _finish_phone(phone, p["client"], s)
+    return await _finish_phone(phone, p["client"], s, user.id)
 
 
-async def _finish_phone(phone: str, client: TelegramClient, s: AsyncSession):
-    acc = await _save_account(client, s)
+async def _finish_phone(phone: str, client: TelegramClient, s: AsyncSession, owner_id: int):
+    acc = await _save_account(client, s, owner_id=owner_id)
     await client.disconnect()
     _pending.pop(phone, None)
     log.info("账号登录成功: %s (%s)", acc.name, phone)
@@ -296,7 +313,7 @@ async def _finish_phone(phone: str, client: TelegramClient, s: AsyncSession):
 
 
 @router.post("/login/qr/start")
-async def qr_start():
+async def qr_start(user: User = Depends(get_current_user)):
     if not config.api_id or not config.api_hash:
         raise HTTPException(400, "未配置 API_ID / API_HASH")
     client = TelegramClient(StringSession(), config.api_id, config.api_hash)
@@ -339,7 +356,8 @@ async def qr_start():
 
 
 @router.post("/login/qr/poll")
-async def qr_poll(body: QRLoginPoll, s: AsyncSession = Depends(get_session)):
+async def qr_poll(body: QRLoginPoll, user: User = Depends(get_current_user),
+                  s: AsyncSession = Depends(get_session)):
     entry = _pending_qr.get(body.bind_id)
     if not entry:
         raise HTTPException(400, "QR 登录会话不存在或已过期")
@@ -362,7 +380,7 @@ async def qr_poll(body: QRLoginPoll, s: AsyncSession = Depends(get_session)):
         return {"needs_password": True, "bind_id": body.bind_id}
 
     if entry["result"]:
-        return await _finish_qr(body.bind_id, entry, s)
+        return await _finish_qr(body.bind_id, entry, s, user.id)
 
     if entry["expired"]:
         _pending_qr.pop(body.bind_id, None)
@@ -376,7 +394,8 @@ async def qr_poll(body: QRLoginPoll, s: AsyncSession = Depends(get_session)):
 
 
 @router.post("/login/qr/password")
-async def qr_password(body: QRLoginPassword, s: AsyncSession = Depends(get_session)):
+async def qr_password(body: QRLoginPassword, user: User = Depends(get_current_user),
+                      s: AsyncSession = Depends(get_session)):
     entry = _pending_qr.get(body.bind_id)
     if not entry:
         raise HTTPException(400, "QR 登录会话不存在或已过期")
@@ -384,11 +403,11 @@ async def qr_password(body: QRLoginPassword, s: AsyncSession = Depends(get_sessi
         await entry["client"].sign_in(password=body.password)
     except Exception as e:
         raise HTTPException(400, f"两步验证失败: {e}")
-    return await _finish_qr(body.bind_id, entry, s)
+    return await _finish_qr(body.bind_id, entry, s, user.id)
 
 
-async def _finish_qr(bind_id: str, entry: dict, s: AsyncSession):
-    acc = await _save_account(entry["client"], s)
+async def _finish_qr(bind_id: str, entry: dict, s: AsyncSession, owner_id: int):
+    acc = await _save_account(entry["client"], s, owner_id=owner_id)
     try:
         await entry["client"].disconnect()
     except Exception:
@@ -402,7 +421,8 @@ async def _finish_qr(bind_id: str, entry: dict, s: AsyncSession):
 
 
 @router.post("/import-sessions")
-async def import_sessions(body: ImportSessions, s: AsyncSession = Depends(get_session)):
+async def import_sessions(body: ImportSessions, user: User = Depends(get_current_user),
+                          s: AsyncSession = Depends(get_session)):
     if not config.api_id or not config.api_hash:
         raise HTTPException(400, "未配置 API_ID / API_HASH")
 
@@ -421,7 +441,7 @@ async def import_sessions(body: ImportSessions, s: AsyncSession = Depends(get_se
             me = await client.get_me()
             if not me:
                 raise ValueError("session 无效或已过期")
-            acc = await _save_account(client, s)
+            acc = await _save_account(client, s, owner_id=user.id)
             imported.append(_out(acc).model_dump(mode="json"))
             log.info("Session 导入成功: %s (%s)", acc.name, acc.phone)
         except Exception as e:
@@ -443,22 +463,30 @@ async def import_sessions(body: ImportSessions, s: AsyncSession = Depends(get_se
 # ──────────────────────── 账号操作 ────────────────────────
 
 
-@router.post("/{account_id}/enable")
-async def set_enabled(account_id: int, enabled: bool = True,
-                      s: AsyncSession = Depends(get_session)):
+async def _get_owned_account(account_id: int, user: User, s: AsyncSession) -> Account:
+    """获取账号并校验所有权（管理员可操作所有账号）。"""
     acc = await s.get(Account, account_id)
     if not acc:
         raise HTTPException(404, "账号不存在")
+    if not user.is_admin and acc.owner_id != user.id:
+        raise HTTPException(403, "无权操作此账号")
+    return acc
+
+
+@router.post("/{account_id}/enable")
+async def set_enabled(account_id: int, enabled: bool = True,
+                      user: User = Depends(get_current_user),
+                      s: AsyncSession = Depends(get_session)):
+    acc = await _get_owned_account(account_id, user, s)
     acc.enabled = enabled
     await s.commit()
     return {"ok": True, "enabled": acc.enabled}
 
 
 @router.post("/{account_id}/start")
-async def start_account(account_id: int, s: AsyncSession = Depends(get_session)):
-    acc = await s.get(Account, account_id)
-    if not acc:
-        raise HTTPException(404, "账号不存在")
+async def start_account(account_id: int, user: User = Depends(get_current_user),
+                        s: AsyncSession = Depends(get_session)):
+    acc = await _get_owned_account(account_id, user, s)
     if not acc.session_string:
         raise HTTPException(400, "账号未登录")
     acc.enabled = True
@@ -468,10 +496,9 @@ async def start_account(account_id: int, s: AsyncSession = Depends(get_session))
 
 
 @router.post("/{account_id}/stop")
-async def stop_account(account_id: int, s: AsyncSession = Depends(get_session)):
-    acc = await s.get(Account, account_id)
-    if not acc:
-        raise HTTPException(404, "账号不存在")
+async def stop_account(account_id: int, user: User = Depends(get_current_user),
+                       s: AsyncSession = Depends(get_session)):
+    acc = await _get_owned_account(account_id, user, s)
     acc.enabled = False
     await s.commit()
     await runner.stop(account_id)
@@ -479,10 +506,10 @@ async def stop_account(account_id: int, s: AsyncSession = Depends(get_session)):
 
 
 @router.post("/{account_id}/monitor")
-async def set_monitor(account_id: int, enabled: bool = True, s: AsyncSession = Depends(get_session)):
-    acc = await s.get(Account, account_id)
-    if not acc:
-        raise HTTPException(404, "账号不存在")
+async def set_monitor(account_id: int, enabled: bool = True,
+                      user: User = Depends(get_current_user),
+                      s: AsyncSession = Depends(get_session)):
+    acc = await _get_owned_account(account_id, user, s)
     acc.monitor_enabled = enabled
     await s.commit()
     runner.update_flags(account_id, monitor=enabled)
@@ -490,10 +517,10 @@ async def set_monitor(account_id: int, enabled: bool = True, s: AsyncSession = D
 
 
 @router.post("/{account_id}/claim")
-async def set_claim(account_id: int, enabled: bool = True, s: AsyncSession = Depends(get_session)):
-    acc = await s.get(Account, account_id)
-    if not acc:
-        raise HTTPException(404, "账号不存在")
+async def set_claim(account_id: int, enabled: bool = True,
+                    user: User = Depends(get_current_user),
+                    s: AsyncSession = Depends(get_session)):
+    acc = await _get_owned_account(account_id, user, s)
     acc.claim_enabled = enabled
     await s.commit()
     runner.update_flags(account_id, claim=enabled)
@@ -501,11 +528,11 @@ async def set_claim(account_id: int, enabled: bool = True, s: AsyncSession = Dep
 
 
 @router.post("/{account_id}/proxy")
-async def set_proxy(account_id: int, body: ProxyUpdate, s: AsyncSession = Depends(get_session)):
+async def set_proxy(account_id: int, body: ProxyUpdate,
+                    user: User = Depends(get_current_user),
+                    s: AsyncSession = Depends(get_session)):
     """设置/清除账号代理。代理变更需重连才生效——运行中账号会自动重启监听。"""
-    acc = await s.get(Account, account_id)
-    if not acc:
-        raise HTTPException(404, "账号不存在")
+    acc = await _get_owned_account(account_id, user, s)
     acc.proxy = (body.proxy or "").strip() or None
     await s.commit()
     restarted = False
@@ -521,10 +548,9 @@ async def set_proxy(account_id: int, body: ProxyUpdate, s: AsyncSession = Depend
 
 
 @router.delete("/{account_id}")
-async def delete_account(account_id: int, s: AsyncSession = Depends(get_session)):
-    acc = await s.get(Account, account_id)
-    if not acc:
-        raise HTTPException(404, "账号不存在")
+async def delete_account(account_id: int, user: User = Depends(get_current_user),
+                         s: AsyncSession = Depends(get_session)):
+    acc = await _get_owned_account(account_id, user, s)
     await runner.stop(account_id)
     await s.delete(acc)
     await s.commit()

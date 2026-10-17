@@ -6,16 +6,18 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
+from pydantic import BaseModel
 from sqlalchemy import select
 
 from core.config import config
 
-from .db import SessionLocal, init_db
-from .models import Account
+from .auth import get_current_user, hash_password, make_token, seed_admin_user, verify_password
+from .db import SessionLocal, get_session, init_db
+from .models import Account, User
 from .routers import accounts, blocklist, groups, modules, overview, records, settings
 from .runner import runner
 from .settings_store import seed_defaults
@@ -72,6 +74,7 @@ async def lifespan(app: FastAPI):
     await init_db()
     async with SessionLocal() as s:
         await seed_defaults(s)
+        await seed_admin_user(s)
     log.info("✅ 后端就绪（DB 已建表/播种）")
     await _autostart()
     yield
@@ -117,6 +120,75 @@ async def _global_error(request: Request, exc: Exception):
 
 @app.get("/api/health")
 async def health():
+    return {"ok": True}
+
+
+# ── Web 用户认证 ──────────────────────────────────────────────
+
+class _LoginIn(BaseModel):
+    username: str
+    password: str
+
+
+class _UserCreate(BaseModel):
+    username: str
+    password: str
+    is_admin: bool = False
+
+
+@app.post("/api/auth/login")
+async def auth_login(body: _LoginIn, s=Depends(get_session)):
+    from sqlalchemy import select as _sel
+    user = (await s.execute(_sel(User).where(User.username == body.username))).scalar_one_or_none()
+    if not user or not verify_password(body.password, user.password_hash):
+        raise HTTPException(401, "用户名或密码错误")
+    token = make_token(user.id)
+    return {"token": token, "user": {"id": user.id, "username": user.username, "is_admin": user.is_admin}}
+
+
+@app.get("/api/auth/me")
+async def auth_me(user: User = Depends(get_current_user)):
+    return {"id": user.id, "username": user.username, "is_admin": user.is_admin}
+
+
+@app.post("/api/auth/users")
+async def create_user(body: _UserCreate, user: User = Depends(get_current_user),
+                      s=Depends(get_session)):
+    if not user.is_admin:
+        raise HTTPException(403, "仅管理员可创建用户")
+    from sqlalchemy import select as _sel
+    exists = (await s.execute(_sel(User).where(User.username == body.username))).scalar_one_or_none()
+    if exists:
+        raise HTTPException(400, "用户名已存在")
+    u = User(username=body.username, password_hash=hash_password(body.password),
+             is_admin=body.is_admin)
+    s.add(u)
+    await s.commit()
+    return {"ok": True, "id": u.id, "username": u.username}
+
+
+@app.get("/api/auth/users")
+async def list_users(user: User = Depends(get_current_user), s=Depends(get_session)):
+    if not user.is_admin:
+        raise HTTPException(403, "仅管理员可查看用户列表")
+    from sqlalchemy import select as _sel
+    rows = (await s.execute(_sel(User).order_by(User.id))).scalars().all()
+    return [{"id": r.id, "username": r.username, "is_admin": r.is_admin,
+             "created_at": r.created_at} for r in rows]
+
+
+@app.delete("/api/auth/users/{uid}")
+async def delete_user(uid: int, user: User = Depends(get_current_user),
+                      s=Depends(get_session)):
+    if not user.is_admin:
+        raise HTTPException(403, "仅管理员可删除用户")
+    if uid == user.id:
+        raise HTTPException(400, "不能删除自己")
+    target = await s.get(User, uid)
+    if not target:
+        raise HTTPException(404, "用户不存在")
+    await s.delete(target)
+    await s.commit()
     return {"ok": True}
 
 

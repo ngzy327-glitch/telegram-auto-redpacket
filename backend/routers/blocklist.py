@@ -9,8 +9,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..auth import get_current_user
 from ..db import get_session
-from ..models import BlockRule
+from ..models import BlockRule, User
 from ..runner import runner
 from ..schemas import BlockPrivateUpdate, BlockRuleIn, BlockRuleOut
 from ..settings_store import get_settings, load_blocklist, update_settings
@@ -29,7 +30,8 @@ async def _hot_reload(s: AsyncSession):
 
 
 @router.get("")
-async def list_rules(s: AsyncSession = Depends(get_session)):
+async def list_rules(user: User = Depends(get_current_user),
+                     s: AsyncSession = Depends(get_session)):
     rows = (await s.execute(
         select(BlockRule).order_by(desc(BlockRule.created_at)))).scalars().all()
     gs = await get_settings(s)
@@ -45,7 +47,10 @@ async def list_rules(s: AsyncSession = Depends(get_session)):
 
 
 @router.post("")
-async def add_rule(body: BlockRuleIn, s: AsyncSession = Depends(get_session)):
+async def add_rule(body: BlockRuleIn, user: User = Depends(get_current_user),
+                   s: AsyncSession = Depends(get_session)):
+    if not user.is_admin:
+        raise HTTPException(403, "仅管理员可修改屏蔽规则")
     if body.target_type not in _VALID_TYPES:
         raise HTTPException(400, "屏蔽类型不合法（应为 群组/频道/用户/机器人）")
     if body.target_id is None or (isinstance(body.target_id, str) and not body.target_id.strip()):
@@ -88,7 +93,10 @@ async def add_rule(body: BlockRuleIn, s: AsyncSession = Depends(get_session)):
 
 
 @router.delete("/{rule_id}")
-async def remove_rule(rule_id: int, s: AsyncSession = Depends(get_session)):
+async def remove_rule(rule_id: int, user: User = Depends(get_current_user),
+                      s: AsyncSession = Depends(get_session)):
+    if not user.is_admin:
+        raise HTTPException(403, "仅管理员可修改屏蔽规则")
     row = await s.get(BlockRule, rule_id)
     if not row:
         raise HTTPException(404, "屏蔽规则不存在")
@@ -99,7 +107,10 @@ async def remove_rule(rule_id: int, s: AsyncSession = Depends(get_session)):
 
 
 @router.put("/private")
-async def set_private(body: BlockPrivateUpdate, s: AsyncSession = Depends(get_session)):
+async def set_private(body: BlockPrivateUpdate, user: User = Depends(get_current_user),
+                      s: AsyncSession = Depends(get_session)):
+    if not user.is_admin:
+        raise HTTPException(403, "仅管理员可修改屏蔽规则")
     await update_settings(s, {"block_private": "1" if body.enabled else "0"})
     await _hot_reload(s)
     return {"ok": True, "block_private": body.enabled}

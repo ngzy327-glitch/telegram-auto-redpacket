@@ -1,6 +1,8 @@
 // 后端 API 客户端（开发态经 Vite 代理到 FastAPI）。
 import axios, { AxiosError } from "axios"
 
+import { clearAuth, getToken, setToken, setUser, type WebUser } from "@/lib/auth"
+
 import type {
   Account,
   BlockList,
@@ -25,10 +27,27 @@ const http = axios.create({
   headers: { "Content-Type": "application/json" },
 })
 
-// 统一把后端 {detail} 错误展开为 Error.message
+// 请求拦截：自动带上 Authorization: Bearer <token>
+http.interceptors.request.use((config) => {
+  const token = getToken()
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`
+  }
+  return config
+})
+
+// 响应拦截：401 时清空登录态并跳转到登录页；其余把 {detail} 展开为 Error.message
 http.interceptors.response.use(
   (res) => res,
   (err: AxiosError<{ detail?: string }>) => {
+    if (err.response?.status === 401) {
+      clearAuth()
+      // 避免在登录页重复跳转
+      if (!location.pathname.startsWith("/login")) {
+        location.href = "/login"
+      }
+      return Promise.reject(new Error("登录已过期，请重新登录"))
+    }
     const detail =
       err.response?.data?.detail ??
       (err.response ? `HTTP ${err.response.status}` : err.message)
@@ -191,4 +210,30 @@ export const api = {
         enabled,
       })
       .then((r) => r.data),
+
+  // —— Web 用户认证 ——
+  login: (username: string, password: string) =>
+    http
+      .post<{ token: string; user: WebUser }>("/auth/login", { username, password })
+      .then((r) => {
+        setToken(r.data.token)
+        setUser(r.data.user)
+        return r.data.user
+      }),
+  me: () =>
+    http.get<WebUser>("/auth/me").then((r) => r.data),
+  listUsers: () =>
+    http.get<Array<{ id: number; username: string; is_admin: boolean; created_at: string }>>(
+      "/auth/users"
+    ).then((r) => r.data),
+  createUser: (username: string, password: string, is_admin = false) =>
+    http
+      .post<{ ok: boolean; id: number; username: string }>("/auth/users", {
+        username,
+        password,
+        is_admin,
+      })
+      .then((r) => r.data),
+  deleteUser: (id: number) =>
+    http.delete<{ ok: boolean }>(`/auth/users/${id}`).then((r) => r.data),
 }

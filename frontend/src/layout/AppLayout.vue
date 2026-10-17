@@ -11,10 +11,13 @@ import {
   Odometer,
   Present,
   Setting,
+  SwitchButton,
   User,
+  UserFilled,
 } from "@element-plus/icons-vue"
 
 import { api } from "@/api"
+import { clearAuth, getUser, type WebUser } from "@/lib/auth"
 import type { Overview } from "@/types"
 import { usePolling } from "@/composables/usePolling"
 
@@ -22,21 +25,33 @@ const route = useRoute()
 const router = useRouter()
 const collapsed = ref(false)
 
+const me: WebUser | null = getUser()
+
 const NAV = [
-  { index: "/dashboard", label: "总览", icon: Odometer },
-  { index: "/accounts", label: "账号管理", icon: User },
-  { index: "/modules", label: "红包模块", icon: Grid },
-  { index: "/groups", label: "秒包管理", icon: ChatLineSquare },
-  { index: "/blocklist", label: "屏蔽管理", icon: CircleClose },
-  { index: "/records", label: "秒包记录", icon: DataLine },
-  { index: "/settings", label: "系统配置", icon: Setting },
+  { index: "/dashboard", label: "总览", icon: Odometer, adminOnly: false },
+  { index: "/accounts", label: "账号管理", icon: User, adminOnly: false },
+  { index: "/modules", label: "红包模块", icon: Grid, adminOnly: false },
+  { index: "/groups", label: "秒包管理", icon: ChatLineSquare, adminOnly: false },
+  { index: "/blocklist", label: "屏蔽管理", icon: CircleClose, adminOnly: false },
+  { index: "/records", label: "秒包记录", icon: DataLine, adminOnly: false },
+  { index: "/users", label: "用户管理", icon: UserFilled, adminOnly: true },
+  { index: "/settings", label: "系统配置", icon: Setting, adminOnly: true },
 ]
+
+const visibleNav = computed(() =>
+  NAV.filter((n) => !n.adminOnly || me?.is_admin)
+)
 
 const activeIndex = computed(() => "/" + (route.path.split("/")[1] || "dashboard"))
 const title = computed(() => (route.meta.title as string) || "")
 
 function onSelect(index: string) {
   router.push(index)
+}
+
+function logout() {
+  clearAuth()
+  router.replace("/login")
 }
 
 // 顶栏全局状态（轻量轮询，切到后台自动暂停）
@@ -71,7 +86,7 @@ usePolling(loadStatus, 10000)
         class="menu"
         @select="onSelect"
       >
-        <el-menu-item v-for="item in NAV" :key="item.index" :index="item.index">
+        <el-menu-item v-for="item in visibleNav" :key="item.index" :index="item.index">
           <el-icon><component :is="item.icon" /></el-icon>
           <template #title>{{ item.label }}</template>
         </el-menu-item>
@@ -93,21 +108,40 @@ usePolling(loadStatus, 10000)
         <el-divider direction="vertical" />
         <span class="header-title">{{ title }}</span>
 
-        <div class="header-status" v-if="ov">
-          <span class="hs-pill">
-            <span class="hs-dot hs-dot--running" />
-            运行 <b class="tnum">{{ ov.accounts.running }}</b
-            >/<span class="tnum">{{ ov.accounts.total }}</span>
-          </span>
-          <span class="hs-pill">
-            今日成功 <b class="tnum">{{ ov.today.success }}</b>
-            <span class="hs-muted">/{{ ov.today.total }}</span>
-          </span>
-          <span class="hs-pill">
-            福利来池
-            <b class="tnum">{{ ov.pool.available }}</b
-            ><span class="hs-muted">/{{ ov.pool.pool_size }}</span>
-          </span>
+        <div class="header-right">
+          <div class="header-status" v-if="ov">
+            <span class="hs-pill">
+              <span class="hs-dot hs-dot--running" />
+              运行 <b class="tnum">{{ ov.accounts.running }}</b
+              >/<span class="tnum">{{ ov.accounts.total }}</span>
+            </span>
+            <span class="hs-pill">
+              今日成功 <b class="tnum">{{ ov.today.success }}</b>
+              <span class="hs-muted">/{{ ov.today.total }}</span>
+            </span>
+            <span class="hs-pill">
+              福利来池
+              <b class="tnum">{{ ov.pool.available }}</b
+              ><span class="hs-muted">/{{ ov.pool.pool_size }}</span>
+            </span>
+          </div>
+
+          <el-dropdown trigger="click" @command="(c: string) => c === 'logout' && logout()">
+            <span class="user-chip">
+              <el-icon :size="16"><UserFilled /></el-icon>
+              <span class="user-name">{{ me?.username }}</span>
+              <el-tag v-if="me?.is_admin" size="small" type="danger" effect="plain">
+                管理员
+              </el-tag>
+            </span>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="logout" :icon="SwitchButton">
+                  退出登录
+                </el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
         </div>
       </el-header>
 
@@ -257,12 +291,44 @@ usePolling(loadStatus, 10000)
   letter-spacing: -0.01em;
 }
 
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-left: auto;
+}
+
 .header-status {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-left: auto;
   font-size: 12.5px;
+}
+
+.user-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 2px solid #000;
+  border-radius: 999px;
+  background: var(--memphis-yellow);
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+  box-shadow: var(--chunky-shadow-sm);
+  transition: transform 0.1s;
+}
+
+.user-chip:hover {
+  transform: translateY(-1px);
+}
+
+.user-name {
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* 顶栏状态胶囊：统一白底（信息分类不靠色相，状态点才用色） */
@@ -311,6 +377,9 @@ usePolling(loadStatus, 10000)
 
 @media (max-width: 768px) {
   .header-status {
+    display: none;
+  }
+  .user-name {
     display: none;
   }
 }

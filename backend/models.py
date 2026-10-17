@@ -18,11 +18,24 @@ from sqlalchemy.orm import Mapped, mapped_column
 from .db import Base
 
 
+class User(Base):
+    """Web 控制台用户（多租户隔离：每个用户只能看到自己的 Telegram 账号）。"""
+    __tablename__ = "web_users"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    username: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(String(255))
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class Account(Base):
     """Telegram 账号（含 StringSession 登录态）。"""
     __tablename__ = "accounts"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[int | None] = mapped_column(
+        ForeignKey("web_users.id", ondelete="SET NULL"), nullable=True, index=True)
     phone: Mapped[str] = mapped_column(String(32), unique=True, index=True)
     user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     name: Mapped[str | None] = mapped_column(String(128), nullable=True)

@@ -1,10 +1,17 @@
 import { createRouter, createWebHistory } from "vue-router"
 
 import AppLayout from "@/layout/AppLayout.vue"
+import { getUser, isLoggedIn } from "@/lib/auth"
 
 export const router = createRouter({
   history: createWebHistory(),
   routes: [
+    {
+      path: "/login",
+      name: "login",
+      meta: { title: "登录", public: true },
+      component: () => import("@/views/LoginView.vue"),
+    },
     {
       path: "/",
       component: AppLayout,
@@ -52,8 +59,26 @@ export const router = createRouter({
           meta: { title: "系统配置" },
           component: () => import("@/views/SettingsView.vue"),
         },
+        {
+          path: "users",
+          name: "users",
+          meta: { title: "用户管理", admin: true },
+          component: () => import("@/views/UsersView.vue"),
+        },
       ],
     },
     { path: "/:pathMatch(.*)*", redirect: "/dashboard" },
   ],
+})
+
+// 路由守卫：未登录跳登录页；管理员路由非管理员跳总览
+router.beforeEach((to) => {
+  if (to.meta.public) return true
+  if (!isLoggedIn()) {
+    return { path: "/login", query: { redirect: to.fullPath } }
+  }
+  if (to.meta.admin === true && !getUser()?.is_admin) {
+    return { path: "/dashboard" }
+  }
+  return true
 })

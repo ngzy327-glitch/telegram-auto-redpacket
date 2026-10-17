@@ -12,6 +12,7 @@ import {
 import { api } from "@/api"
 import { usePolling } from "@/composables/usePolling"
 import { mergeById } from "@/lib/merge"
+import { authUrl } from "@/lib/auth"
 import type { Account, MonitoredGroup } from "@/types"
 
 const groups = ref<MonitoredGroup[]>([])
@@ -314,7 +315,7 @@ usePolling(silentRefresh, 8000, false)
       <el-table-column label="群组" min-width="220">
         <template #default="{ row }">
           <div class="group-cell">
-            <el-avatar :size="32" :src="row.avatar_url || ''" class="group-avatar">
+            <el-avatar :size="32" :src="authUrl(row.avatar_url) || ''" class="group-avatar">
               {{ displayName(row).charAt(0) }}
             </el-avatar>
             <div class="group-info">

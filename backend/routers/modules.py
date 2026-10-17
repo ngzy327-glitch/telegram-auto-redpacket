@@ -2,7 +2,9 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..auth import get_current_user
 from ..db import get_session
+from ..models import User
 from ..runner import runner
 from ..schemas import ModuleBatchToggle, ModuleOut, ModuleUpdate
 from ..settings_store import (
@@ -17,13 +19,22 @@ from ..settings_store import (
 router = APIRouter(prefix="/api/modules", tags=["modules"])
 
 
+def _require_admin(user: User):
+    if not user.is_admin:
+        raise HTTPException(403, "仅管理员可修改模块配置")
+
+
 @router.get("", response_model=list[ModuleOut])
-async def list_modules(s: AsyncSession = Depends(get_session)):
+async def list_modules(user: User = Depends(get_current_user),
+                       s: AsyncSession = Depends(get_session)):
     return await get_modules(s)
 
 
 @router.put("/{key}", response_model=ModuleOut)
-async def toggle_module(key: str, body: ModuleUpdate, s: AsyncSession = Depends(get_session)):
+async def toggle_module(key: str, body: ModuleUpdate,
+                        user: User = Depends(get_current_user),
+                        s: AsyncSession = Depends(get_session)):
+    _require_admin(user)
     m = await update_module(s, key, body.enabled)
     if not m:
         raise HTTPException(404, "模块不存在")
@@ -33,8 +44,11 @@ async def toggle_module(key: str, body: ModuleUpdate, s: AsyncSession = Depends(
 
 
 @router.post("/batch")
-async def batch_toggle_modules(body: ModuleBatchToggle, s: AsyncSession = Depends(get_session)):
+async def batch_toggle_modules(body: ModuleBatchToggle,
+                               user: User = Depends(get_current_user),
+                               s: AsyncSession = Depends(get_session)):
     """一键全开/全关所有红包模块（保存后热推送到运行中 grabber）。"""
+    _require_admin(user)
     mods = await get_modules(s)
     for m in mods:
         m.enabled = body.enabled
@@ -44,14 +58,18 @@ async def batch_toggle_modules(body: ModuleBatchToggle, s: AsyncSession = Depend
 
 
 @router.get("/{key}/config")
-async def read_module_config(key: str, s: AsyncSession = Depends(get_session)):
+async def read_module_config(key: str, user: User = Depends(get_current_user),
+                             s: AsyncSession = Depends(get_session)):
     if key not in MODULE_CONFIG_FIELDS:
         raise HTTPException(404, "该模块无独立配置")
     return await get_module_config(s, key)
 
 
 @router.put("/{key}/config")
-async def write_module_config(key: str, body: dict, s: AsyncSession = Depends(get_session)):
+async def write_module_config(key: str, body: dict,
+                              user: User = Depends(get_current_user),
+                              s: AsyncSession = Depends(get_session)):
+    _require_admin(user)
     if key not in MODULE_CONFIG_FIELDS:
         raise HTTPException(404, "该模块无独立配置")
     await update_module_config(s, key, body)
@@ -78,7 +96,7 @@ async def _apply_pool_config(cfg: dict):
 
 
 @router.get("/{key}/status")
-async def module_status(key: str):
+async def module_status(key: str, user: User = Depends(get_current_user)):
     """模块运行状态（福利来=token 池状态，验证码=已识别字体数）。"""
     if key == "fulilai":
         from core.claimers.fulilai import pool_status

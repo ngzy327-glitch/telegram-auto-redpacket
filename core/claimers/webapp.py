@@ -15,8 +15,14 @@ import time
 from pathlib import Path
 
 from telethon import events
-from telethon.tl import functions
-from telethon.tl.types import KeyboardButtonWebView, Message
+from telethon.tl import functions, types
+
+# telethon 1.45+ 兼容：KeyboardButtonWebView → InlineButtonTypeWebView
+try:
+    KeyboardButtonWebView = types.KeyboardButtonWebView
+except AttributeError:
+    KeyboardButtonWebView = types.InlineButtonTypeWebView
+Message = types.Message
 
 from ..browser import launch_browser
 from ..config import config

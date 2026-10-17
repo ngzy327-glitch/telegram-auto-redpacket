@@ -1,9 +1,11 @@
 """系统配置路由：读取 / 更新（AI 模型、key、通知 bot、重试次数等）。
 更新后自动热推送到运行中的 grabber，无需重启。"""
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..auth import get_current_user
 from ..db import get_session
+from ..models import User
 from ..runner import runner
 from ..schemas import SettingsUpdate
 from ..settings_store import get_settings, parse_filter_settings, update_settings
@@ -16,12 +18,16 @@ _FILTER_KEYS = {"filter_keywords", "filter_currency_mode", "filter_currencies",
 
 
 @router.get("")
-async def read_settings(s: AsyncSession = Depends(get_session)):
+async def read_settings(user: User = Depends(get_current_user),
+                        s: AsyncSession = Depends(get_session)):
     return await get_settings(s)
 
 
 @router.put("")
-async def write_settings(body: SettingsUpdate, s: AsyncSession = Depends(get_session)):
+async def write_settings(body: SettingsUpdate, user: User = Depends(get_current_user),
+                         s: AsyncSession = Depends(get_session)):
+    if not user.is_admin:
+        raise HTTPException(403, "仅管理员可修改系统配置")
     data = {k: v for k, v in body.model_dump().items() if v is not None}
     await update_settings(s, data)
     result = await get_settings(s)

@@ -15,8 +15,13 @@ import logging
 import time
 
 from telethon import events
-from telethon.tl import functions
-from telethon.tl.types import KeyboardButtonCallback
+from telethon.tl import functions, types
+
+# telethon 1.45+ 兼容：KeyboardButtonCallback → InlineButtonTypeCallback
+try:
+    KeyboardButtonCallback = types.KeyboardButtonCallback
+except AttributeError:
+    KeyboardButtonCallback = types.InlineButtonTypeCallback
 
 from ..charset import MATH_RE, normalize_operand, solve_expr_with_buttons
 from .base import BLOCKED_KW, EMPTY_KW, SUCCESS_KW, WRONG_KW, ClaimResult, extract_amount

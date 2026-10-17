@@ -8,8 +8,9 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..auth import get_current_user
 from ..db import get_session
-from ..models import Account, GrabRecord
+from ..models import Account, GrabRecord, User
 from ..runner import runner
 
 router = APIRouter(prefix="/api/overview", tags=["overview"])
@@ -19,9 +20,14 @@ _TZ = timezone(timedelta(hours=8))
 
 
 @router.get("")
-async def overview(s: AsyncSession = Depends(get_session)):
-    # ── 账号分布 ──
-    accs = (await s.execute(select(Account))).scalars().all()
+async def overview(user: User = Depends(get_current_user),
+                   s: AsyncSession = Depends(get_session)):
+    # ── 账号分布（非管理员仅看自己的）──
+    q = select(Account)
+    if not user.is_admin:
+        q = q.where(Account.owner_id == user.id)
+    accs = (await s.execute(q)).scalars().all()
+
     by_status: dict[str, int] = {}
     running = connected = 0
     for a in accs:
@@ -31,6 +37,30 @@ async def overview(s: AsyncSession = Depends(get_session)):
         if runner.is_connected(a.id):
             connected += 1
 
+    # 非管理员：记录查询限定到自己的 account_id
+    account_ids: list[int] | None = None
+    if not user.is_admin:
+        account_ids = [a.id for a in accs]
+
+    record_conds = []
+    if account_ids is not None:
+        if not account_ids:
+            # 该用户还没有任何账号 → 数据全空
+            from core.claimers.fulilai import pool_status
+            return {
+                "accounts": {"total": 0, "running": 0, "connected": 0, "by_status": {}},
+                "today": {"total": 0, "success": 0, "failed": 0, "success_rate": 0.0},
+                "totals": {"total": 0, "success": 0, "failed": 0},
+                "trend": [
+                    {"date": (datetime.now(_TZ) - timedelta(days=i)).strftime("%m-%d"),
+                     "total": 0, "success": 0}
+                    for i in range(6, -1, -1)
+                ],
+                "by_wallet": [], "by_account": [], "recent": [],
+                "pool": pool_status(),
+            }
+        record_conds.append(GrabRecord.account_id.in_(account_ids))
+
     # ── 近 7 日趋势（按北京时区分日，一次聚合）──
     day = func.date(func.timezone(_TZ_NAME, GrabRecord.created_at))
     now_bj = datetime.now(_TZ)
@@ -39,7 +69,7 @@ async def overview(s: AsyncSession = Depends(get_session)):
         select(day.label("d"),
                func.count(GrabRecord.id),
                func.count(GrabRecord.id).filter(GrabRecord.ok.is_(True)))
-        .where(GrabRecord.created_at >= since)
+        .where(GrabRecord.created_at >= since, *record_conds)
         .group_by(day))).all()
     daily = {str(r[0]): (r[1], r[2]) for r in rows}
     today_str = now_bj.strftime("%Y-%m-%d")
@@ -55,24 +85,29 @@ async def overview(s: AsyncSession = Depends(get_session)):
     # ── 累计总数/成功 ──
     row = (await s.execute(select(
         func.count(GrabRecord.id),
-        func.count(GrabRecord.id).filter(GrabRecord.ok.is_(True))))).one()
+        func.count(GrabRecord.id).filter(GrabRecord.ok.is_(True)))
+        .where(*record_conds))).one()
     total, success = row[0] or 0, row[1] or 0
 
     # ── 钱包/账号分布（仅成功）──
+    success_conds = [GrabRecord.ok.is_(True)]
+    if account_ids is not None:
+        success_conds.append(GrabRecord.account_id.in_(account_ids))
+
     by_wallet = (await s.execute(
         select(GrabRecord.wallet, func.count(GrabRecord.id))
-        .where(GrabRecord.ok.is_(True), GrabRecord.wallet.isnot(None))
+        .where(*success_conds, GrabRecord.wallet.isnot(None))
         .group_by(GrabRecord.wallet)
         .order_by(desc(func.count(GrabRecord.id))))).all()
     by_account = (await s.execute(
         select(GrabRecord.account_name, func.count(GrabRecord.id))
-        .where(GrabRecord.ok.is_(True))
+        .where(*success_conds)
         .group_by(GrabRecord.account_name)
         .order_by(desc(func.count(GrabRecord.id))).limit(8))).all()
 
     # ── 最近成功 ──
     recent = (await s.execute(
-        select(GrabRecord).where(GrabRecord.ok.is_(True))
+        select(GrabRecord).where(*success_conds)
         .order_by(desc(GrabRecord.created_at)).limit(8))).scalars().all()
 
     from core.claimers.fulilai import pool_status

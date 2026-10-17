@@ -7,6 +7,7 @@ import type { Account } from "@/types"
 import { ACCOUNT_STATUS } from "@/types"
 import { usePolling } from "@/composables/usePolling"
 import { mergeById } from "@/lib/merge"
+import { authUrl } from "@/lib/auth"
 import LoginDialog from "@/components/LoginDialog.vue"
 import PageHeader from "@/components/PageHeader.vue"
 import StatusDot from "@/components/StatusDot.vue"
@@ -287,7 +288,7 @@ usePolling(silentRefresh, 8000, false)
               <el-avatar
                 :size="34"
                 shape="square"
-                :src="row.avatar_url || undefined"
+                :src="authUrl(row.avatar_url) || undefined"
                 class="acct-avatar"
                 :style="{ background: avatarColor(row.id) }"
               >

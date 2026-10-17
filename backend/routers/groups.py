@@ -15,8 +15,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core import cache
 
+from ..auth import get_current_user
 from ..db import SessionLocal, get_session
-from ..models import MonitoredGroup
+from ..models import MonitoredGroup, User
 from ..runner import runner
 from ..schemas import GroupBatchToggle, GroupPin, GroupToggle
 
@@ -81,13 +82,15 @@ async def _hot_reload(s: AsyncSession):
 # ── 列表 / 扫描 ──
 
 @router.get("")
-async def list_groups(s: AsyncSession = Depends(get_session)):
+async def list_groups(user: User = Depends(get_current_user),
+                      s: AsyncSession = Depends(get_session)):
     rows = (await s.execute(_ordered())).scalars().all()
     return [_row_to_dict(r) for r in rows]
 
 
 @router.post("/scan")
-async def scan_groups(s: AsyncSession = Depends(get_session)):
+async def scan_groups(user: User = Depends(get_current_user),
+                      s: AsyncSession = Depends(get_session)):
     """触发扫描：遍历所有运行中账号的对话列表，汇总去重后 upsert 到 DB。
     保留已有群的 enabled / pinned 状态，新群默认开启。"""
     groups = await runner.scan_all_groups()
@@ -130,13 +133,13 @@ async def scan_groups(s: AsyncSession = Depends(get_session)):
 # ── 开关 ──
 
 @router.put("/{group_id}/toggle")
-async def toggle_group(group_id: int, body: GroupToggle, s: AsyncSession = Depends(get_session)):
+async def toggle_group(group_id: int, body: GroupToggle,
+                       user: User = Depends(get_current_user),
+                       s: AsyncSession = Depends(get_session)):
     row = await s.get(MonitoredGroup, group_id)
     if not row:
         raise HTTPException(404, "群组不存在")
     row.enabled = body.enabled
-    # 趁 row 刚加载、所有列都在内存里，先快照成 dict，避免 commit/hot_reload 之后
-    # 再访问 ORM 属性触发跨 greenlet 的惰性刷新（高并发下会报 MissingGreenlet）
     result = _row_to_dict(row)
     await s.commit()
     await _hot_reload(s)
@@ -144,7 +147,9 @@ async def toggle_group(group_id: int, body: GroupToggle, s: AsyncSession = Depen
 
 
 @router.put("/{group_id}/pin")
-async def pin_group(group_id: int, body: GroupPin, s: AsyncSession = Depends(get_session)):
+async def pin_group(group_id: int, body: GroupPin,
+                    user: User = Depends(get_current_user),
+                    s: AsyncSession = Depends(get_session)):
     row = await s.get(MonitoredGroup, group_id)
     if not row:
         raise HTTPException(404, "群组不存在")
@@ -155,7 +160,9 @@ async def pin_group(group_id: int, body: GroupPin, s: AsyncSession = Depends(get
 
 
 @router.post("/batch")
-async def batch_toggle(body: GroupBatchToggle, s: AsyncSession = Depends(get_session)):
+async def batch_toggle(body: GroupBatchToggle,
+                       user: User = Depends(get_current_user),
+                       s: AsyncSession = Depends(get_session)):
     rows = (await s.execute(select(MonitoredGroup))).scalars().all()
     for r in rows:
         r.enabled = body.enabled
@@ -165,7 +172,8 @@ async def batch_toggle(body: GroupBatchToggle, s: AsyncSession = Depends(get_ses
 
 
 @router.delete("/{group_id}")
-async def remove_group(group_id: int, s: AsyncSession = Depends(get_session)):
+async def remove_group(group_id: int, user: User = Depends(get_current_user),
+                       s: AsyncSession = Depends(get_session)):
     row = await s.get(MonitoredGroup, group_id)
     if not row:
         raise HTTPException(404, "群组不存在")
@@ -253,7 +261,7 @@ def _avatar_resp(data: bytes) -> Response:
 
 
 @router.get("/avatar/{cid}")
-async def get_avatar(cid: int):
+async def get_avatar(cid: int, user: User = Depends(get_current_user)):
     """头像懒加载：Redis 热缓存 → DB 持久层 → telethon 下载，逐层回填。"""
     # 1) Redis 热缓存（本地，避开远程 RDS）
     rv = await _avatar_redis_get(cid)

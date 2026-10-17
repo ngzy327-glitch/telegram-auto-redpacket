@@ -1,14 +1,23 @@
 """秒包记录路由：分页查询 + 统计。"""
-import asyncio
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..db import SessionLocal, get_session
-from ..models import GrabRecord
+from ..auth import get_current_user
+from ..db import get_session
+from ..models import Account, GrabRecord, User
 
 router = APIRouter(prefix="/api/records", tags=["records"])
+
+
+async def _account_id_filter(user: User, s: AsyncSession) -> list[int] | None:
+    """返回当前用户可见的 account_id 列表；管理员返回 None（不过滤）。"""
+    if user.is_admin:
+        return None
+    rows = (await s.execute(
+        select(Account.id).where(Account.owner_id == user.id))).scalars().all()
+    return rows
 
 
 @router.get("")
@@ -16,11 +25,17 @@ async def list_records(
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
     ok_only: bool = Query(False),
+    user: User = Depends(get_current_user),
     s: AsyncSession = Depends(get_session),
 ):
     q = select(GrabRecord)
     if ok_only:
         q = q.where(GrabRecord.ok.is_(True))
+    if not user.is_admin:
+        ids = await _account_id_filter(user, s)
+        if not ids:
+            return {"total": 0, "page": page, "size": size, "items": []}
+        q = q.where(GrabRecord.account_id.in_(ids))
     total = (await s.execute(select(func.count()).select_from(q.subquery()))).scalar() or 0
     rows = (await s.execute(
         q.order_by(desc(GrabRecord.created_at))
@@ -52,35 +67,49 @@ async def list_records(
 
 
 @router.get("/stats")
-async def record_stats(s: AsyncSession = Depends(get_session)):
-    # 总数 + 成功数：单条条件聚合（1 次往返，原先 2 次）
+async def record_stats(user: User = Depends(get_current_user),
+                       s: AsyncSession = Depends(get_session)):
+    # 非管理员：限定到自己的账号
+    account_ids: list[int] | None = None
+    if not user.is_admin:
+        account_ids = await _account_id_filter(user, s)
+        if not account_ids:
+            return {
+                "total": 0, "success": 0, "failed": 0,
+                "by_account": [], "by_bot": [], "by_wallet": [],
+            }
+
+    # 总数 + 成功数（直接在 where 上加账号过滤，不用 subquery 避免笛卡尔积）
+    count_conds = []
+    if account_ids is not None:
+        count_conds.append(GrabRecord.account_id.in_(account_ids))
     row = (await s.execute(
         select(
             func.count(GrabRecord.id),
             func.count(GrabRecord.id).filter(GrabRecord.ok.is_(True)),
-        )
+        ).where(*count_conds)
     )).one()
     total = row[0] or 0
     success = row[1] or 0
 
-    # 三个分组聚合彼此独立 → 并行（各自独立 session，避免同 session 并发执行）
+    # 三个分组聚合（用同一个 session 顺序执行，兼容 SQLite/PostgreSQL）
     async def _group(col, skip_null: bool):
         conds = [GrabRecord.ok.is_(True)]
+        if account_ids is not None:
+            conds.append(GrabRecord.account_id.in_(account_ids))
         if skip_null:
             conds.append(col.isnot(None))
-        async with SessionLocal() as gs:
-            return (await gs.execute(
-                select(col, func.count(GrabRecord.id))
-                .where(*conds)
-                .group_by(col)
-                .order_by(desc(func.count(GrabRecord.id)))
-            )).all()
+        result = await s.execute(
+            select(col, func.count(GrabRecord.id))
+            .where(*conds)
+            .group_by(col)
+            .order_by(desc(func.count(GrabRecord.id)))
+        )
+        return result.all()
 
-    by_account, by_bot, by_wallet = await asyncio.gather(
-        _group(GrabRecord.account_name, False),
-        _group(GrabRecord.target_bot, True),
-        _group(GrabRecord.wallet, True),
-    )
+    by_account = await _group(GrabRecord.account_name, False)
+    by_bot = await _group(GrabRecord.target_bot, True)
+    by_wallet = await _group(GrabRecord.wallet, True)
 
     return {
         "total": total,
