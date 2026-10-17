@@ -80,7 +80,7 @@ async def lifespan(app: FastAPI):
     await close_redis()
 
 
-app = FastAPI(title="Telegram 自动抢红包 v0.2 学习版", lifespan=lifespan)
+app = FastAPI(title="浅秋科技v1", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
