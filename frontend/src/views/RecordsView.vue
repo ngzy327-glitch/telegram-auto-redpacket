@@ -230,6 +230,16 @@ onMounted(load)
   margin-bottom: 16px;
 }
 
+@media (max-width: 768px) {
+  .stat-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+  }
+  .stat-value {
+    font-size: 18px;
+  }
+}
+
 .stat-card {
   border-radius: 10px;
 }

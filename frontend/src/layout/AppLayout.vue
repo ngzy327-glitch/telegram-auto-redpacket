@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue"
+import { computed, onMounted, onUnmounted, ref } from "vue"
 import { useRoute, useRouter } from "vue-router"
 import {
   ChatLineSquare,
@@ -23,7 +23,35 @@ import { usePolling } from "@/composables/usePolling"
 
 const route = useRoute()
 const router = useRouter()
+const isMobile = ref(false)
 const collapsed = ref(false)
+const drawerOpen = ref(false)
+
+function syncViewport() {
+  const mobile = window.innerWidth < 768
+  isMobile.value = mobile
+  if (mobile) {
+    collapsed.value = true
+    drawerOpen.value = false
+  } else {
+    drawerOpen.value = false
+  }
+}
+
+function toggleSidebar() {
+  if (isMobile.value) {
+    drawerOpen.value = !drawerOpen.value
+    collapsed.value = false
+  } else {
+    collapsed.value = !collapsed.value
+  }
+}
+
+onMounted(() => {
+  syncViewport()
+  window.addEventListener("resize", syncViewport)
+})
+onUnmounted(() => window.removeEventListener("resize", syncViewport))
 
 const me: WebUser | null = getUser()
 
@@ -46,6 +74,7 @@ const activeIndex = computed(() => "/" + (route.path.split("/")[1] || "dashboard
 const title = computed(() => (route.meta.title as string) || "")
 
 function onSelect(index: string) {
+  if (isMobile.value) drawerOpen.value = false
   router.push(index)
 }
 
@@ -68,7 +97,12 @@ usePolling(loadStatus, 10000)
 
 <template>
   <el-container class="layout">
-    <el-aside :width="collapsed ? '72px' : '224px'" class="aside">
+    <div v-if="isMobile && drawerOpen" class="mask" @click="drawerOpen = false" />
+    <el-aside
+      :width="collapsed ? '72px' : '224px'"
+      class="aside"
+      :class="{ 'aside--mobile': isMobile, 'aside--drawer-open': drawerOpen }"
+    >
       <div class="brand">
         <div class="brand-logo chunky-shadow-sm">
           <el-icon :size="20"><Present /></el-icon>
@@ -99,7 +133,7 @@ usePolling(loadStatus, 10000)
 
     <el-container>
       <el-header class="header">
-        <el-button text class="collapse-btn" @click="collapsed = !collapsed">
+        <el-button text class="collapse-btn" @click="toggleSidebar">
           <el-icon :size="18">
             <Expand v-if="collapsed" />
             <Fold v-else />
@@ -170,6 +204,29 @@ usePolling(loadStatus, 10000)
   background: var(--el-bg-color);
   transition: width 0.2s;
   overflow: hidden;
+  flex-shrink: 0;
+}
+
+/* 移动端抽屉 */
+.aside--mobile {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 1001;
+  height: 100vh;
+  transform: translateX(-100%);
+  transition: transform 0.25s ease;
+}
+
+.aside--drawer-open {
+  transform: translateX(0);
+}
+
+.mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 1000;
 }
 
 .brand {
@@ -368,6 +425,7 @@ usePolling(loadStatus, 10000)
 .main {
   background: var(--el-bg-color-page);
   padding: 24px;
+  overflow-x: hidden;
 }
 
 .main-inner {
@@ -376,11 +434,21 @@ usePolling(loadStatus, 10000)
 }
 
 @media (max-width: 768px) {
+  .header {
+    height: 56px;
+    padding: 0 8px;
+  }
   .header-status {
     display: none;
   }
   .user-name {
     display: none;
+  }
+  .main {
+    padding: 12px;
+  }
+  .header-title {
+    font-size: 15px;
   }
 }
 </style>

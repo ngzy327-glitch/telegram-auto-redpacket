@@ -19,6 +19,17 @@ body,
 body {
   background: var(--el-bg-color-page);
   color: var(--el-text-color-primary);
+  overflow-x: hidden;
+}
+
+/* 移动端基础适配：防止横向溢出导致整体放大，根字号稍缩小 */
+@media (max-width: 768px) {
+  html {
+    font-size: 15px;
+  }
+  .el-card {
+    --el-card-padding: 16px;
+  }
 }
 
 a {
