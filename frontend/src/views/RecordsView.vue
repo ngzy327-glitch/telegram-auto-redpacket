@@ -12,7 +12,7 @@ const loading = ref(true)
 const page = ref(1)
 const total = ref(0)
 const pageSize = ref(20)
-const okOnly = ref(false)
+const okOnly = ref(true)
 
 const successRate = computed(() => {
   if (!stats.value || stats.value.total === 0) return "0"
