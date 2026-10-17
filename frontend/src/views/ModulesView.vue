@@ -47,8 +47,8 @@ const MODULE_META: Record<string, { wallets: string[]; detail: string }> = {
     detail: "群内 callback「领取红包」按钮，一步到账，无验证码（最快）",
   },
   captcha: {
-    wallets: ["okpay", "kkpay"],
-    detail: "群内算式 X + Y = ?，自动解题点按钮（含花式 emoji 解码，答案跨账号共享）",
+    wallets: ["okpay", "kkpay", "tcqb"],
+    detail: "群内算式 X + Y = ? / emoji 验证码，自动解题点按钮（答案跨账号共享）",
   },
   dm_captcha: {
     wallets: ["wlqb"],
