@@ -323,4 +323,10 @@ usePolling(load, 10000, false)
     grid-template-columns: 1fr;
   }
 }
+
+@media (max-width: 480px) {
+  .kpi-grid {
+    grid-template-columns: 1fr;
+  }
+}
 </style>

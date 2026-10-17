@@ -93,4 +93,22 @@ withDefaults(
   margin-left: 6px;
   color: var(--el-text-color-placeholder);
 }
+
+@media (max-width: 768px) {
+  .stat-card {
+    padding: 12px 14px;
+    gap: 10px;
+  }
+  .sc-icon {
+    width: 38px;
+    height: 38px;
+    font-size: 18px;
+  }
+  .sc-value {
+    font-size: 19px;
+  }
+  .sc-label {
+    font-size: 12px;
+  }
+}
 </style>
