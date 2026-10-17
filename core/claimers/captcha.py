@@ -100,17 +100,22 @@ class CaptchaClaimer:
 
         tm["solve"] = time.time()
 
+        # 两轮匹配：先全表精确匹配，再去前导零匹配，避免靠前的按钮的模糊匹配
+        # 抢先于靠后按钮的精确匹配（如按钮 [7, 007]、答案 007）。
         target_data = None
         answer_upper = answer.upper()
-        for label, data in buttons:
-            norm_label = _normalize_operand(label).upper()
-            # 精确匹配 → 去前导零匹配 → 数值匹配
+        norm_buttons = [(_normalize_operand(l).upper(), d) for l, d in buttons]
+        for norm_label, data in norm_buttons:
             if norm_label == answer_upper:
                 target_data = data
                 break
-            if norm_label.lstrip("0") == answer_upper.lstrip("0") and answer_upper.lstrip("0"):
-                target_data = data
-                break
+        if target_data is None:
+            stripped = answer_upper.lstrip("0")
+            if stripped:
+                for norm_label, data in norm_buttons:
+                    if norm_label.lstrip("0") == stripped:
+                        target_data = data
+                        break
 
         if target_data is None:
             log.warning(f"答案 {answer} 不在选项中: {[l + '→' + _normalize_operand(l) for l, _ in buttons]}")
