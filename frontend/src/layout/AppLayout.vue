@@ -59,7 +59,7 @@ usePolling(loadStatus, 10000)
           <el-icon :size="20"><Present /></el-icon>
         </div>
         <div v-if="!collapsed" class="brand-text">
-          <span class="brand-name">自动抢红包 v0.2 学习版</span>
+          <span class="brand-name">浅秋科技v1</span>
           <span class="brand-sub">红包系统</span>
         </div>
       </div>
@@ -78,7 +78,7 @@ usePolling(loadStatus, 10000)
       </el-menu>
 
       <div v-if="!collapsed" class="aside-footer">
-        <span class="version-pill">v0.2.0</span>
+        <span class="version-pill">v1.0.0</span>
       </div>
     </el-aside>
 
