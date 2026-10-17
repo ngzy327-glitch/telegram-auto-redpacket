@@ -439,6 +439,15 @@ usePolling(loadStatus, 5000)
           type="password"
           show-password
         />
+        <!-- 多行文本类型（JSON 配置等） -->
+        <el-input
+          v-else-if="field.type === 'textarea'"
+          v-model="configForm[field.key]"
+          type="textarea"
+          :rows="6"
+          spellcheck="false"
+          class="mono-input"
+        />
         <!-- 文本类型 -->
         <el-input v-else v-model="configForm[field.key]" />
         <div class="hint">{{ field.hint }}</div>
@@ -614,6 +623,13 @@ usePolling(loadStatus, 5000)
 /* 配置弹窗 */
 .config-form {
   max-width: 480px;
+}
+
+/* JSON 配置多行输入框：等宽字体 + 加宽 */
+.config-form :deep(.mono-input textarea) {
+  font-family: 'JetBrains Mono', 'Fira Code', Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.6;
 }
 
 .hint {
