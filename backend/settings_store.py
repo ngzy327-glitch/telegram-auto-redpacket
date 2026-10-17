@@ -286,6 +286,28 @@ def _module_cfg_from_settings(s: dict, module_key: str) -> dict:
     return {f["key"]: s.get(f"mod.{module_key}.{f['key']}", "") for f in fields}
 
 
+def parse_vision_providers(raw: str, fallback: list[dict]) -> list[dict]:
+    """解析多厂商视觉并发配置（JSON 数组 [{model,tag,api_key,base_url}]）。
+
+    空/非法/无有效条目时回退 fallback（vision_providers.json 文件或单厂商）。"""
+    providers: list[dict] = []
+    if raw and raw.strip():
+        try:
+            data = json.loads(raw)
+            if isinstance(data, list):
+                for item in data:
+                    if isinstance(item, dict) and (item.get("model") or "").strip():
+                        providers.append({
+                            "model": item["model"].strip(),
+                            "tag": (item.get("tag") or item["model"]).strip(),
+                            "api_key": (item.get("api_key") or "").strip(),
+                            "base_url": (item.get("base_url") or "").strip(),
+                        })
+        except json.JSONDecodeError as e:
+            log.warning(f"vision_providers_json 解析失败，回退默认: {e}")
+    return providers or list(fallback)
+
+
 async def build_runconfig(session, account) -> RunConfig:
     """为单个账号组装有效运行配置（DB 设置 + 模块 + 账号 StringSession）。
 
@@ -330,23 +352,7 @@ async def build_runconfig(session, account) -> RunConfig:
     # 多厂商并发配置（JSON）：模块级 → 全局 → vision_providers.json 文件 → 回退单厂商
     vision_providers_raw = (webapp_cfg.get("vision_providers_json")
                             or s.get("vision_providers_json", ""))
-    vision_providers: list[dict] = []
-    if vision_providers_raw.strip():
-        try:
-            data = json.loads(vision_providers_raw)
-            if isinstance(data, list):
-                for item in data:
-                    if isinstance(item, dict) and (item.get("model") or "").strip():
-                        vision_providers.append({
-                            "model": item["model"].strip(),
-                            "tag": (item.get("tag") or item["model"]).strip(),
-                            "api_key": (item.get("api_key") or "").strip(),
-                            "base_url": (item.get("base_url") or "").strip(),
-                        })
-        except json.JSONDecodeError as e:
-            log.warning(f"vision_providers_json 解析失败，回退默认: {e}")
-    if not vision_providers:
-        vision_providers = list(config.vision_providers)
+    vision_providers = parse_vision_providers(vision_providers_raw, config.vision_providers)
 
     # fulilai 2captcha key（模块级 → 全局）
     twocaptcha = fulilai_cfg.get("twocaptcha_key") or s.get("twocaptcha_key", "")

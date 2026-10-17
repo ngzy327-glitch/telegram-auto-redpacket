@@ -23,7 +23,7 @@ from core.reporter import build_detect_report, build_summary_report
 
 from .db import SessionLocal
 from .models import Account, GrabRecord
-from .settings_store import build_runconfig
+from .settings_store import build_runconfig, parse_vision_providers
 
 log = logging.getLogger("backend.runner")
 
@@ -98,7 +98,16 @@ class Runner:
         for aid, info in self._runs.items():
             if info["task"].done():
                 continue
-            info["grabber"].run.module_configs[module_key] = cfg
+            g = info["grabber"]
+            g.run.module_configs[module_key] = cfg
+            # webapp 视觉多厂商配置变更 → 重解析并同步到运行中的领取器
+            if module_key == "webapp":
+                providers = parse_vision_providers(
+                    cfg.get("vision_providers_json") or "", config.vision_providers)
+                g.run.vision_providers = providers
+                w = getattr(g, "_webapp", None)
+                if w is not None:
+                    w.providers = providers
             count += 1
         if count:
             log.info(f"热更新模块配置 [{module_key}] → {count} 账号")

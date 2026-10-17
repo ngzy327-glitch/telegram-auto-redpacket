@@ -138,6 +138,8 @@ class WebappClaimer:
         else:
             self.providers = [{"model": m, "tag": t, "api_key": None, "base_url": None}
                                for m, t in config.vision_models]
+        log.info("webapp 并发识别: " + ", ".join(
+            f"[{p['tag']}]{p['model']}" for p in self.providers))
 
     @staticmethod
     def _classify(t: str):
