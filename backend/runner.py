@@ -12,6 +12,7 @@ from telethon.errors import (
     UserDeactivatedBanError,
     UserDeactivatedError,
 )
+from telethon.utils import get_peer_id
 
 from core import cache
 from core.config import config
@@ -179,7 +180,8 @@ class Runner:
     async def resolve_username(self, username: str) -> tuple[int, str | None] | None:
         """通过任一运行中账号的 Telethon 客户端解析 @用户名 → (数字 ID, 显示名)。
 
-        用于屏蔽规则：用户/机器人可填 @用户名，后端解析为数字 ID 后存储。
+        用于屏蔽规则：用户/机器人/群组/频道均可填 @用户名，后端解析为数字 ID 后存储。
+        - 用户/机器人返回正数 ID；群组/频道返回负数 chat_id（与 msg.chat_id 一致）。
         解析失败（用户名不存在 / 无在线账号）返回 None。
         """
         uname = username.strip().lstrip("@")
@@ -206,7 +208,12 @@ class Runner:
                 title = getattr(entity, "title", None)
                 if title:
                     name = title
-            return int(entity.id), name
+            # get_peer_id 会把 PeerChannel/PeerChat 转成负数 chat_id，User 保持正数
+            try:
+                peer_id = int(get_peer_id(entity))
+            except Exception:
+                peer_id = int(entity.id)
+            return peer_id, name
         return None
 
     def hot_reload_disabled_groups(self, disabled_ids: set[int]):

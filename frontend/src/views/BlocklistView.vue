@@ -83,10 +83,12 @@ async function submitAdd() {
     return
   }
 
-  // 群组/频道必须是负数（数字ID）
+  // 群组/频道：允许负数数字 ID 或 @用户名
   if (form.target_type === "group" || form.target_type === "channel") {
-    if (!/^-\d+$/.test(rawId)) {
-      ElMessage.error("群/频道 ID 必须为负数（如 -100xxxx）")
+    const isNegNum = /^-\d+$/.test(rawId)
+    const isUsername = rawId.startsWith("@")
+    if (!isNegNum && !isUsername) {
+      ElMessage.error("群/频道请填写负数 ID（如 -100xxxx）或 @用户名")
       return
     }
   } else {
@@ -99,8 +101,8 @@ async function submitAdd() {
     }
   }
 
-  // 如果是纯数字，转为数字类型；如果是 @用户名，保留字符串
-  const finalTargetId = /^\d+$/.test(rawId) ? Number(rawId) : rawId
+  // 数字（含负数）转 number 类型；@用户名 保留字符串交给后端解析
+  const finalTargetId = /^-?\d+$/.test(rawId) ? Number(rawId) : rawId
 
   adding.value = true
   try {
@@ -217,9 +219,10 @@ onMounted(load)
           </el-radio-group>
         </el-form-item>
         <el-form-item label="目标 ID">
-          <el-input v-model="form.target_id" placeholder="群/频道填负数，用户/机器人可填数字ID或@用户名" />
+          <el-input v-model="form.target_id" placeholder="群/频道填负数ID或@用户名，用户/机器人填数字ID或@用户名" />
           <div class="hint">
-            群/频道 ID 可在「秒包管理」查看；用户/机器人支持数字 ID 或 @用户名（如 @okpay）。
+            群/频道可填负数 ID（如 -100xxxx）或 @用户名；私密群无用户名请填负数 ID。
+            用户/机器人支持数字 ID 或 @用户名（如 @okpay）。
           </div>
         </el-form-item>
         <el-form-item label="名称（可选）">

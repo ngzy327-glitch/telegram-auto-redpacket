@@ -59,8 +59,8 @@ async def add_rule(body: BlockRuleIn, user: User = Depends(get_current_user),
     target_id = body.target_id
     target_name = body.target_name
 
-    # 用户 / 机器人：允许填 @用户名，解析为数字 ID 后存储
-    if body.target_type in ("user", "bot") and isinstance(target_id, str):
+    # 所有类型：若填的是 @用户名（字符串），统一解析为数字 ID 后存储
+    if isinstance(target_id, str) and target_id.strip().startswith("@"):
         resolved = await runner.resolve_username(target_id)
         if resolved is None:
             raise HTTPException(
@@ -70,9 +70,15 @@ async def add_rule(body: BlockRuleIn, user: User = Depends(get_current_user),
         if not target_name:
             target_name = resolved_name or target_id.strip().lstrip("@")
 
-    # 群组 / 频道：必须是数字 ID（负数）
-    if body.target_type in ("group", "channel") and isinstance(target_id, str):
-        raise HTTPException(400, "群组/频道屏蔽需填写数字 ID（如 -100xxxx）")
+    # 到此 target_id 必须是数字（用户/机器人正数，群/频道负数）
+    try:
+        target_id = int(target_id)
+    except (TypeError, ValueError):
+        raise HTTPException(400, "目标 ID 格式不合法，应为数字 ID 或 @用户名")
+
+    # 群组 / 频道：必须是负数
+    if body.target_type in ("group", "channel") and target_id >= 0:
+        raise HTTPException(400, "群组/频道 ID 必须为负数（如 -100xxxx），或填写 @用户名")
 
     existing = (await s.execute(select(BlockRule).where(
         BlockRule.target_type == body.target_type,

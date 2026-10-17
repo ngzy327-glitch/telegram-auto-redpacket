@@ -131,7 +131,7 @@ class ModuleBatchToggle(BaseModel):
 # ---- 屏蔽规则 ----
 class BlockRuleIn(BaseModel):
     target_type: str          # group | channel | user | bot
-    # 用户/机器人支持 @用户名（字符串），后端解析为数字 ID 后存储；群/频道必须是数字 ID
+    # 所有类型均支持 @用户名（后端解析为数字 ID 后存储）；也可直接填数字 ID（群/频道为负数）
     target_id: int | str
     target_name: str | None = None
     note: str | None = None
