@@ -44,9 +44,11 @@ class CaptchaClaimer:
         expr: str,
         buttons: list[tuple[str, bytes]],
         tm: dict,
+        emoji_answer: str | None = None,
     ) -> ClaimResult:
         """检测账号本地领取：复用 event 的 input_chat（最快，免解析 peer）。"""
-        return await self._do_claim(msg.chat_id, msg.id, expr, buttons, tm, event=event)
+        return await self._do_claim(msg.chat_id, msg.id, expr, buttons, tm, event=event,
+                                    emoji_answer=emoji_answer)
 
     async def claim_fast(
         self,
@@ -55,13 +57,16 @@ class CaptchaClaimer:
         expr: str,
         buttons: list[tuple[str, bytes]],
         tm: dict,
+        emoji_answer: str | None = None,
     ) -> ClaimResult:
         """跨账号快路径：仅凭 (chat_id, msg_id, 算式, 按钮) 领取，不需要群消息对象。
 
         答案走 Redis 共享，按钮 data 已在 rp 中，省去 get_messages 往返。"""
-        return await self._do_claim(chat_id, msg_id, expr, buttons, tm, event=None)
+        return await self._do_claim(chat_id, msg_id, expr, buttons, tm, event=None,
+                                    emoji_answer=emoji_answer)
 
-    async def _do_claim(self, chat_id, msg_id, expr, buttons, tm, event=None) -> ClaimResult:
+    async def _do_claim(self, chat_id, msg_id, expr, buttons, tm, event=None,
+                        emoji_answer: str | None = None) -> ClaimResult:
         tm["mode"] = "captcha"
 
         # 验证码答案共享：同一红包其他账号已解出 → 直接用，跳过解题
@@ -73,7 +78,11 @@ class CaptchaClaimer:
         except Exception:
             pass
 
-        if answer:
+        if emoji_answer:
+            # 汤臣钱包 emoji 验证码：答案直接由 detector 从备注提取，无需解题
+            answer = emoji_answer
+            log.info(f"🔑 emoji 验证码答案: {answer}")
+        elif answer:
             log.info(f"♻️ 复用答案 {answer}（{expr}）")
         else:
             btn_labels = [l for l, _ in buttons]
@@ -100,25 +109,32 @@ class CaptchaClaimer:
 
         tm["solve"] = time.time()
 
-        # 两轮匹配：先全表精确匹配，再去前导零匹配，避免靠前的按钮的模糊匹配
-        # 抢先于靠后按钮的精确匹配（如按钮 [7, 007]、答案 007）。
+        # 匹配按钮：emoji 答案直接按原文匹配；数字/字母答案走归一化匹配
         target_data = None
-        answer_upper = answer.upper()
-        norm_buttons = [(_normalize_operand(l).upper(), d) for l, d in buttons]
-        for norm_label, data in norm_buttons:
-            if norm_label == answer_upper:
-                target_data = data
-                break
-        if target_data is None:
-            stripped = answer_upper.lstrip("0")
-            if stripped:
-                for norm_label, data in norm_buttons:
-                    if norm_label.lstrip("0") == stripped:
-                        target_data = data
-                        break
+        if emoji_answer:
+            for label, data in buttons:
+                if label == emoji_answer:
+                    target_data = data
+                    break
+        else:
+            # 两轮匹配：先全表精确匹配，再去前导零匹配，避免靠前的按钮的模糊匹配
+            # 抢先于靠后按钮的精确匹配（如按钮 [7, 007]、答案 007）。
+            answer_upper = answer.upper()
+            norm_buttons = [(_normalize_operand(l).upper(), d) for l, d in buttons]
+            for norm_label, data in norm_buttons:
+                if norm_label == answer_upper:
+                    target_data = data
+                    break
+            if target_data is None:
+                stripped = answer_upper.lstrip("0")
+                if stripped:
+                    for norm_label, data in norm_buttons:
+                        if norm_label.lstrip("0") == stripped:
+                            target_data = data
+                            break
 
         if target_data is None:
-            log.warning(f"答案 {answer} 不在选项中: {[l + '→' + _normalize_operand(l) for l, _ in buttons]}")
+            log.warning(f"答案 {answer} 不在选项中: {[l for l, _ in buttons]}")
             return ClaimResult(False, retryable=False)
 
         try:

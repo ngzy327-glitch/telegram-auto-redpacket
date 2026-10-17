@@ -30,6 +30,7 @@ const CURRENCY_SUGGESTIONS = ["USDT", "CNY", "KKCOIN", "WLCOIN", "JIBA", "TRX"]
 const WALLET_OPTIONS = [
   { value: "kkpay", label: "KKPay钱包" },
   { value: "dlqb", label: "达利钱包" },
+  { value: "tcqb", label: "汤臣钱包" },
   { value: "okpay", label: "OKPay钱包" },
   { value: "wlqb", label: "未来钱包" },
   { value: "fllqb", label: "福利来钱包" },

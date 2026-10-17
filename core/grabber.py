@@ -588,7 +588,8 @@ class OKPayGrabber:
             if rp.kind == "direct":
                 r = await self._direct.claim_fast(chat_id, msg_id, rp.direct_data, tm)
             else:  # captcha
-                r = await self._captcha.claim_fast(chat_id, msg_id, rp.captcha_expr, rp.captcha_buttons, tm)
+                r = await self._captcha.claim_fast(chat_id, msg_id, rp.captcha_expr, rp.captcha_buttons, tm,
+                                                   emoji_answer=rp.emoji_answer)
             tm["done"] = time.time()
 
             if r.ok:
@@ -636,7 +637,8 @@ class OKPayGrabber:
             if rp.kind == "direct":
                 r = await self._direct.claim(event, msg, rp.direct_data, tm)
             elif rp.kind == "captcha":
-                r = await self._captcha.claim(event, msg, rp.captcha_expr, rp.captcha_buttons, tm)
+                r = await self._captcha.claim(event, msg, rp.captcha_expr, rp.captcha_buttons, tm,
+                                              emoji_answer=rp.emoji_answer)
             elif rp.kind == "dm_captcha":
                 r = await self._dm_captcha.claim(rp.webapp_bot, rp.start_param, tm)
             elif rp.kind == "fulilai":

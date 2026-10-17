@@ -68,6 +68,7 @@ WALLET_USERNAMES: dict[str, str] = {
     "htjiamibot": "wlqb",
     "dlqb": "dlqb",
     "fllqb": "fllqb",
+    "tcqb": "tcqb",       # 汤臣钱包
 }
 
 # callback data 前缀 → 钱包（bot_id 识别失败时的回退；kkpay/dlqb 前缀相同，靠 bot_id 区分）
@@ -82,7 +83,8 @@ _CB_WALLET_PREFIXES: list[tuple[str, str]] = [
 
 WALLET_LABELS: dict[str, str] = {
     "okpay": "OKPay钱包", "kkpay": "KKPay钱包", "wlqb": "未来钱包",
-    "dlqb": "达利钱包", "fllqb": "福利来钱包", "unknown": "未知钱包",
+    "dlqb": "达利钱包", "fllqb": "福利来钱包", "tcqb": "汤臣钱包",
+    "unknown": "未知钱包",
 }
 
 CONDITION_LABELS: dict[str, str] = {
@@ -252,6 +254,67 @@ def _rows(msg):
     return getattr(getattr(msg, "reply_markup", None), "rows", None) or []
 
 
+# 原生 emoji 范围（不含 keycap 组合，单独处理）
+_EMOJI_RANGES = (
+    (0x1F300, 0x1FAFF),   # 杂项符号、交通、动物、食物、活动、物体、符号
+    (0x2600, 0x27BF),     # 杂项符号、装饰符号、dingbats
+    (0x1F000, 0x1F2FF),   # 麻将、纸牌、方块、字母表情
+    (0x1F900, 0x1F9FF),   # 补充符号和象形
+)
+
+
+def _is_emoji_char(ch: str) -> bool:
+    cp = ord(ch)
+    for lo, hi in _EMOJI_RANGES:
+        if lo <= cp <= hi:
+            return True
+    return False
+
+
+def extract_emojis(text: str) -> list[str]:
+    """提取文本中的原生 emoji（保留 ZWJ/VS16 组合序列，按 grapheme 粗切）。"""
+    out: list[str] = []
+    cur = ""
+    for ch in text or "":
+        cp = ord(ch)
+        if _is_emoji_char(ch) or ch in ("\u200d", "\ufe0f"):
+            cur += ch
+        else:
+            if cur:
+                out.append(cur)
+                cur = ""
+    if cur:
+        out.append(cur)
+    return out
+
+
+def find_tcqb_emoji_quiz(msg, text: str) -> tuple[str, list[tuple[str, bytes]]] | None:
+    """汤臣钱包(tcqb) emoji 验证码：红包备注含答案 emoji，按钮是 emoji 选项。
+
+    从按钮中收集所有 emoji 选项，再从消息文本里找出第一个出现在按钮中的 emoji 作为答案。
+    返回 (答案emoji, [(按钮emoji, callback_data), ...])，无匹配返回 None。
+    """
+    buttons: list[tuple[str, bytes]] = []
+    for row in _rows(msg):
+        for btn in row.buttons:
+            if not isinstance(btn, KeyboardButtonCallback):
+                continue
+            label = (btn.text or "").strip()
+            emojis = extract_emojis(label)
+            if emojis:
+                # 按钮文字里第一个 emoji 作为该按钮的标识
+                buttons.append((emojis[0], btn.data))
+    if not buttons:
+        return None
+
+    btn_emojis = {e for e, _ in buttons}
+    # 在消息全文里找第一个命中按钮集合的 emoji（通常在备注"答案"附近）
+    for e in extract_emojis(text):
+        if e in btn_emojis:
+            return e, buttons
+    return None
+
+
 _EXHAUSTED_RE = re.compile(r"剩余[:：]\s*0\s*/")
 
 
@@ -407,6 +470,7 @@ class RedPacket:
     webapp_bot: str | None = None      # kind=webapp / dm_captcha: bot username
     captcha_expr: str | None = None    # kind=captcha / dm_captcha: 算式原文
     captcha_buttons: list = field(default_factory=list)  # kind=captcha: [(label, data)]
+    emoji_answer: str | None = None    # kind=captcha(tcqb): 备注里的答案 emoji，直接匹配按钮
     needs_emoji_decode: bool = False   # captcha 中含自定义 emoji，需要异步解码
     fulilai_hash: str | None = None    # kind=fulilai: 红包标识（hash 或 dataId）
     fulilai_startapp: str | None = None  # kind=fulilai: startapp 完整参数
@@ -496,6 +560,13 @@ def classify(msg, direct_keywords: list[str] | None = None, decoded_text: str | 
         if not decoded_text and _has_custom_emoji_in_expr(msg):
             return _wrap(RedPacket("captcha", captcha_buttons=buttons, needs_emoji_decode=True))
         return _wrap(RedPacket("captcha", captcha_expr=expr, captcha_buttons=buttons))
+
+    # 2.5) 汤臣钱包(tcqb) emoji 验证码：备注含答案 emoji，按钮是 emoji 选项
+    if wallet == "tcqb":
+        eq = find_tcqb_emoji_quiz(msg, text)
+        if eq:
+            answer_emoji, buttons = eq
+            return _wrap(RedPacket("captcha", captcha_buttons=buttons, emoji_answer=answer_emoji))
 
     # 3) 福利来红包（fllqb URL，startapp + hash/dataId，与 ?start= 不同）
     fll = find_fulilai(msg)

@@ -123,6 +123,7 @@ export const WALLET_LABEL: Record<string, string> = {
   wlqb: "未来钱包",
   dlqb: "达利钱包",
   fllqb: "福利来钱包",
+  tcqb: "汤臣钱包",
   unknown: "未知",
 }
 
