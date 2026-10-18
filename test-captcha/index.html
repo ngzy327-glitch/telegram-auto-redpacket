@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>安全验证</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  body {
+    font-family: "Noto Sans CJK SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #eef1f7; min-height: 100vh;
+    display: flex; flex-direction: column; align-items: center;
+    padding: 20px 12px 40px;
+  }
+  /* 调试条：在截图区域外，不会被 AI 看到 */
+  .devbar {
+    width: 100%; max-width: 400px; margin-bottom: 10px;
+    background: #222a3a; color: #9fe8b0; border-radius: 10px;
+    padding: 10px 12px; font-size: 12px; line-height: 1.8;
+  }
+  .devbar b { color: #ffd66b; }
+  .devbar .row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  .devbar button {
+    border: 1px solid #3a465f; background: #2d3850; color: #cfd8ee;
+    border-radius: 6px; padding: 3px 10px; font-size: 12px; cursor: pointer;
+  }
+  .devbar button.on { background: #0040ff; border-color: #0040ff; color: #fff; }
+  .devbar button.act { background: #1f8a4d; border-color: #1f8a4d; color: #fff; }
+
+  /* ===== 验证码卡片：领取器只截这个区域（.captcha-containers） ===== */
+  .captcha-containers {
+    width: 100%; max-width: 400px; background: #fff;
+    border-radius: 14px; box-shadow: 0 8px 30px rgba(30,40,80,.15);
+    padding: 18px 16px 20px; user-select: none;
+  }
+  .cap-title { font-size: 16px; font-weight: 700; color: #1f2430; text-align: center; }
+  .cap-tip { font-size: 12px; color: #8a90a2; text-align: center; margin-top: 4px; }
+
+  /* 上区：3 个目标汉字图片 + 红色 01/02/03 */
+  .targets { display: flex; justify-content: center; gap: 14px; margin: 14px 0 6px; }
+  .target { display: flex; flex-direction: column; align-items: center; gap: 3px; }
+  .target img {
+    width: 64px; height: 64px; border: 1px solid #e3e6f0; border-radius: 8px;
+    background: #fff;
+  }
+  .order-tag {
+    background: #ff2d4f; color: #fff; font-size: 12px; font-weight: 800;
+    border-radius: 4px; padding: 1px 7px; font-family: Arial, sans-serif;
+    letter-spacing: 1px;
+  }
+
+  /* 下区：码池 */
+  .pool-wrap { border-top: 1px dashed #dfe3ee; margin-top: 10px; padding-top: 12px; }
+  .pool { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .char-box {
+    position: relative; aspect-ratio: 1 / 1; border: 1px solid #e3e6f0;
+    border-radius: 8px; overflow: hidden; background: #fff; cursor: pointer;
+    transition: transform .08s, box-shadow .08s;
+  }
+  .char-box:active { transform: scale(.94); }
+  .char-box img { width: 100%; height: 100%; display: block; }
+  .char-box.picked { box-shadow: 0 0 0 2px #0040ff inset; }
+  .char-box.shake { animation: shake .35s; }
+  @keyframes shake {
+    0%,100% { transform: translateX(0); }
+    25% { transform: translateX(-5px); }
+    75% { transform: translateX(5px); }
+  }
+  /* 已点顺序徽标（页面自己的，非 AI 蓝色角标） */
+  .pick-badge {
+    position: absolute; right: 2px; bottom: 2px; z-index: 50;
+    background: #ff2d4f; color: #fff; width: 20px; height: 20px;
+    border-radius: 50%; font-size: 12px; font-weight: 800;
+    display: flex; align-items: center; justify-content: center;
+    font-family: Arial, sans-serif;
+  }
+
+  #submitBtn {
+    width: 100%; margin-top: 14px; height: 44px; border: none; border-radius: 10px;
+    background: linear-gradient(135deg, #0040ff, #5a47ff);
+    color: #fff; font-size: 16px; font-weight: 700; cursor: pointer;
+    transition: opacity .15s;
+  }
+  #submitBtn:active { opacity: .85; }
+
+  /* 结果横幅（领取器靠 body 文本里的 成功/验证失败 判定） */
+  #result {
+    width: 100%; max-width: 400px; margin-top: 14px; text-align: center;
+    font-size: 15px; font-weight: 700; min-height: 24px;
+  }
+  #result.ok { color: #12a150; }
+  #result.bad { color: #ff2d4f; }
+</style>
+</head>
+<body>
+
+<!-- 调试区（截图外，AI 看不到答案） -->
+<div class="devbar">
+  <div class="row">
+    <b>测试控制台</b>
+    <span>码池：</span>
+    <button data-n="9">9</button>
+    <button data-n="10">10</button>
+    <button data-n="11">11</button>
+    <button data-n="12" class="on">12</button>
+    <button id="randBtn" title="每题随机 9-12 个">随机9-12</button>
+    <button id="newBtn" class="act">换一题</button>
+  </div>
+  <div id="answerLine">答案加载中…</div>
+  <div>尝试：<b id="attCount">0</b> 次　|　成功：<b id="okCount">0</b> 次</div>
+</div>
+
+<!-- ===== 领取器截图区域，class 必须为 captcha-containers ===== -->
+<div class="captcha-containers">
+  <div class="cap-title">请完成安全验证</div>
+  <div class="cap-tip">请按红色顺序，在下方依次点击对应的汉字</div>
+
+  <div class="targets" id="targets"></div>
+
+  <div class="pool-wrap">
+    <div class="pool" id="pool"></div>
+  </div>
+
+  <button id="submitBtn">我已经完成验证 ✅</button>
+</div>
+
+<div id="result"></div>
+
+<script>
+// 字形差异较大的常用字，避免形近字互相干扰测试
+const CHARS = (
+  "猫狗猴兔龙虎鸟鱼马牛羊鸡鸭鹅蝶蜂蝉龟蛇" +
+  "春夏秋冬风雨云雪雷电星日月山水火石田土木" +
+  "花草树叶莲菊梅兰竹松江河海溪泉冰" +
+  "红黄蓝绿紫黑白粉橙金银灰" +
+  "车马船飞机路桥楼塔门窗桌椅床灯伞钟表镜" +
+  "米面包饭茶奶糖蛋糕果肉瓜豆葱蒜姜茶" +
+  "琴棋书画笔墨纸砚歌舞戏球箭剑" +
+  "爷奶爸妈哥姐弟妹叔姨伯孙儿" +
+  "东南西北上下左右前后内外中" +
+  "高矮胖瘦长短粗细新旧老幼明暗冷热快慢"
+).split("");
+
+const params = new URLSearchParams(location.search);
+let poolSize = parseInt(params.get("n") || "12", 10);
+if (![9, 10, 11, 12].includes(poolSize)) poolSize = 12;
+let randomSize = params.get("rand") === "1";
+
+let puzzle = null;       // {targets:[字], pool:[{char, idx}], picks:[idx]}
+let attempts = 0, oks = 0;
+
+const $targets = document.getElementById("targets");
+const $pool = document.getElementById("pool");
+const $result = document.getElementById("result");
+const $answer = document.getElementById("answerLine");
+
+function shuffle(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+// 用 canvas 把汉字渲染成真图片（真实验证码就是图，且领取器会等 <img> 加载完成）
+function makeCharImage(ch, { target = false } = {}) {
+  const S = 160;
+  const cv = document.createElement("canvas");
+  cv.width = cv.height = S;
+  const ctx = cv.getContext("2d");
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0, 0, S, S);
+
+  ctx.save();
+  ctx.translate(S / 2, S / 2);
+  // 码池字：随机旋转/缩放/颜色；目标字：端正清晰
+  const rot = target ? 0 : (Math.random() - 0.5) * 0.5;
+  const scale = target ? 0.62 : 0.55 + Math.random() * 0.12;
+  ctx.rotate(rot);
+  ctx.scale(scale, scale);
+  ctx.font = `900 160px "Noto Sans CJK SC","Microsoft YaHei",sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  if (target) {
+    ctx.fillStyle = "#1f2430";
+  } else {
+    const g = 40 + Math.floor(Math.random() * 70);
+    ctx.fillStyle = `rgb(${g},${g},${g + 20})`;
+  }
+  ctx.fillText(ch, 0, 8);
+  ctx.restore();
+
+  if (!target) {
+    // 黑色干扰直线（2 条粗线贯穿）
+    ctx.lineCap = "round";
+    for (let k = 0; k < 2; k++) {
+      ctx.strokeStyle = `rgba(20,20,20,${0.55 + Math.random() * 0.3})`;
+      ctx.lineWidth = 3 + Math.random() * 3;
+      ctx.beginPath();
+      const y1 = Math.random() * S, y2 = Math.random() * S;
+      ctx.moveTo(-10, y1);
+      ctx.lineTo(S + 10, y2);
+      ctx.stroke();
+    }
+    // 细干扰线
+    for (let k = 0; k < 2; k++) {
+      ctx.strokeStyle = "rgba(80,80,80,.35)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(Math.random() * S, -5);
+      ctx.lineTo(Math.random() * S, S + 5);
+      ctx.stroke();
+    }
+    // 噪点
+    for (let k = 0; k < 220; k++) {
+      const v = Math.floor(Math.random() * 180);
+      ctx.fillStyle = `rgba(${v},${v},${v},.35)`;
+      ctx.fillRect(Math.random() * S, Math.random() * S, 2, 2);
+    }
+  }
+
+  const img = new Image();
+  img.src = cv.toDataURL("image/png");
+  return img;
+}
+
+function newPuzzle() {
+  if (randomSize) poolSize = 9 + Math.floor(Math.random() * 4);
+  document.querySelectorAll(".devbar button[data-n]").forEach(b =>
+    b.classList.toggle("on", parseInt(b.dataset.n, 10) === poolSize));
+  document.getElementById("randBtn").classList.toggle("on", randomSize);
+
+  const chars = shuffle(CHARS.slice());
+  const targets = chars.slice(0, 3);
+  const distractors = chars.slice(3, poolSize);
+  const pool = shuffle(targets.concat(distractors)).map((char, idx) => ({ char, idx }));
+
+  puzzle = { targets, pool, picks: [] };
+  $result.textContent = "";
+  $result.className = "";
+
+  // 上区目标
+  $targets.innerHTML = "";
+  targets.forEach((ch, i) => {
+    const wrap = document.createElement("div");
+    wrap.className = "target";
+    wrap.appendChild(makeCharImage(ch, { target: true }));
+    const tag = document.createElement("span");
+    tag.className = "order-tag";
+    tag.textContent = "0" + (i + 1);
+    wrap.appendChild(tag);
+    $targets.appendChild(wrap);
+  });
+
+  // 下区码池（data-index 从 0 开始，领取器注入蓝标后 AI 看到的是 1 开始）
+  $pool.innerHTML = "";
+  pool.forEach(({ char, idx }) => {
+    const box = document.createElement("div");
+    box.className = "char-box";
+    box.setAttribute("data-index", idx);
+    box.appendChild(makeCharImage(char));
+    box.addEventListener("click", () => onPick(idx, box));
+    $pool.appendChild(box);
+  });
+
+  // 调试答案
+  const pos = {};
+  pool.forEach(({ char, idx }) => { pos[char] = idx + 1; });
+  $answer.innerHTML = "答案：" + targets.map((ch, i) =>
+    `<b>${ch}</b>→点第${pos[ch]}格`).join("，") +
+    `（共 ${poolSize} 格，顺序 ${targets.join("→")}）`;
+}
+
+function onPick(idx, box) {
+  if (puzzle.picks.includes(idx)) return;
+  const expect = puzzle.targets[puzzle.picks.length];
+  const got = puzzle.pool.find(p => p.idx === idx).char;
+
+  if (got !== expect) {
+    // 点错：抖动并清空已选（模拟真实验证码）
+    box.classList.add("shake");
+    setTimeout(() => box.classList.remove("shake"), 400);
+    resetPicks();
+    return;
+  }
+  puzzle.picks.push(idx);
+  box.classList.add("picked");
+  const badge = document.createElement("span");
+  badge.className = "pick-badge";
+  badge.textContent = puzzle.picks.length;
+  box.appendChild(badge);
+}
+
+function resetPicks() {
+  puzzle.picks = [];
+  $pool.querySelectorAll(".char-box").forEach(b => {
+    b.classList.remove("picked");
+    b.querySelectorAll(".pick-badge").forEach(e => e.remove());
+  });
+}
+
+function submit() {
+  attempts++;
+  document.getElementById("attCount").textContent = attempts;
+  const pickedChars = puzzle.picks.map(i => puzzle.pool.find(p => p.idx === i).char);
+  const pass = pickedChars.length === 3 &&
+               pickedChars.every((ch, i) => ch === puzzle.targets[i]);
+  if (pass) {
+    oks++;
+    document.getElementById("okCount").textContent = oks;
+    $result.className = "ok";
+    $result.textContent = "✅ 验证成功，红包领取成功！";
+  } else {
+    $result.className = "bad";
+    $result.textContent = "❌ 验证失败，请重新尝试（2 秒后自动换题）";
+    setTimeout(() => { newPuzzle(); }, 2000);
+  }
+}
+
+document.getElementById("submitBtn").addEventListener("click", submit);
+document.getElementById("newBtn").addEventListener("click", newPuzzle);
+document.getElementById("randBtn").addEventListener("click", () => {
+  randomSize = !randomSize;
+  newPuzzle();
+});
+document.querySelectorAll(".devbar button[data-n]").forEach(b => {
+  b.addEventListener("click", () => {
+    poolSize = parseInt(b.dataset.n, 10);
+    randomSize = false;
+    newPuzzle();
+  });
+});
+
+newPuzzle();
+</script>
+</body>
+</html>
