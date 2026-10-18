@@ -14,7 +14,7 @@ router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 # 领取策略过滤相关的设置键（任一变更即整组重新解析热推送）
 _FILTER_KEYS = {"filter_keywords", "filter_currency_mode", "filter_currencies",
-                "filter_min_amounts", "filter_skip_conditions",
+                "filter_min_amounts", "filter_max_packets", "filter_skip_conditions",
                 "filter_block_wallets", "filter_block_tokens"}
 
 

@@ -88,6 +88,16 @@ WALLET_LABELS: dict[str, str] = {
     "unknown": "未知钱包",
 }
 
+# 钱包 → 原生币种（小写）。用于垃圾币拦截：即使红包备注写"1000u"，
+# 只要钱包是 kkpay，其原生币就是 kkcoin，命中 block_tokens 即跳过。
+WALLET_NATIVE_COINS: dict[str, list[str]] = {
+    "kkpay": ["kkcoin", "kk币"],
+    "wlqb": ["wlcoin", "wl币"],
+    "dlqb": ["jiba", "鸡巴币", "jbcoin"],
+    "fllqb": ["fllcoin"],
+    "tcqb": ["tccoin"],
+}
+
 CONDITION_LABELS: dict[str, str] = {
     "premium": "Premium会员", "group": "指定群组", "user": "指定用户",
     "turnover": "流水要求", "winloss": "输赢要求", "locked": "已锁定",

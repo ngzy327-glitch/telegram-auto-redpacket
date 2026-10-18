@@ -9,7 +9,7 @@
 import logging
 import re
 
-from .detector import CONDITION_LABELS, clean
+from .detector import CONDITION_LABELS, WALLET_NATIVE_COINS, clean
 
 log = logging.getLogger("core.filters")
 
@@ -76,6 +76,18 @@ def check_filters(rp, text: str, run) -> str | None:
             if t in raw or (ct and ct in cleaned):
                 return f"命中币种关键词「{t}」"
 
+    # 1.6) 钱包原生币种拦截：按钱包识别其原生币（如 kkpay→kkcoin），
+    #      即使红包备注写"1000u"实际是 kkcoin 也能拦住，不依赖文案解析。
+    if block_tokens and wallet and wallet in WALLET_NATIVE_COINS:
+        for native in WALLET_NATIVE_COINS[wallet]:
+            n = native.strip().lower()
+            if not n:
+                continue
+            for tok in block_tokens:
+                t = (tok or "").strip().lower()
+                if t and (t == n or t in n or n in t):
+                    return f"钱包 {wallet} 原生币「{native}」命中屏蔽"
+
     value, currency = parse_amount(getattr(rp, "amount_text", None))
 
     # 2) 币种白/黑名单（未识别出币种 → 不拦）
@@ -96,6 +108,18 @@ def check_filters(rp, text: str, run) -> str | None:
         if limit is not None and value < float(limit):
             unit = currency or ""
             return f"总金额 {value:g}{unit} 低于下限 {float(limit):g}"
+
+    # 3.5) 份数上限：红包总份数超过阈值即跳过（空投类红包份数极大，如 ♾️ 无限份）。
+    #      total_count 取自「剩余 x/N」的分母 N；0 或未设置表示不过滤。
+    max_pkts = getattr(run, "filter_max_packets", 0) or 0
+    total_count = getattr(rp, "total_count", None)
+    if max_pkts and total_count:
+        try:
+            n = int(total_count)
+            if n > int(max_pkts):
+                return f"份数 {n} 超过上限 {max_pkts}（疑似空投）"
+        except (TypeError, ValueError):
+            pass
 
     # 4) 条件红包：含勾选类型的领取条件即跳过（premium/group/user/turnover/winloss）
     skip_conds: set = getattr(run, "filter_skip_conditions", None) or set()

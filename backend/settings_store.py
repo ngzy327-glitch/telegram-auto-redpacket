@@ -19,7 +19,8 @@ SETTING_KEYS = ["vision_api_key", "vision_base_url", "vision_model",
                 "direct_keywords", "capmonster_key",
                 # 领取策略过滤（core/filters.py）
                 "filter_keywords", "filter_currency_mode", "filter_currencies",
-                "filter_min_amounts", "filter_skip_conditions",
+                "filter_min_amounts", "filter_max_packets", "filter_skip_conditions",
+                "filter_block_wallets", "filter_block_tokens",
                 # 屏蔽：私信总开关（群/频道/用户/机器人走 block_rules 表）
                 "block_private"]
 
@@ -89,7 +90,10 @@ def _defaults() -> dict:
         "filter_currency_mode": "off",  # off|white|black
         "filter_currencies": "",      # 逗号分隔，大写
         "filter_min_amounts": "",     # JSON 对象 {"USDT":1,"*":0.5}
+        "filter_max_packets": "0",    # 红包总份数上限，超过则跳过（0=不过滤）
         "filter_skip_conditions": "",  # 逗号分隔 premium,turnover,...
+        "filter_block_wallets": "",   # 逗号分隔钱包标识 kkpay,dlqb,...
+        "filter_block_tokens": "",    # 逗号分隔币种/代币关键词 kkcoin,jiba,...
         "block_private": "0",         # 屏蔽所有私信红包（"1" 开）
     }
 
@@ -140,12 +144,25 @@ def parse_filter_settings(s: dict) -> dict:
     skip_conds = {c.strip() for c in (s.get("filter_skip_conditions") or "").split(",")
                   if c.strip()} & _VALID_CONDITIONS
 
+    try:
+        max_pkts = int(s.get("filter_max_packets") or "0")
+    except (TypeError, ValueError):
+        max_pkts = 0
+
+    block_wallets = {w.strip() for w in (s.get("filter_block_wallets") or "").split(",")
+                     if w.strip()}
+    block_tokens = {t.strip() for t in (s.get("filter_block_tokens") or "").split(",")
+                    if t.strip()}
+
     return {
         "filter_keywords": keywords,
         "filter_currency_mode": mode,
         "filter_currencies": currencies,
         "filter_min_amounts": mins,
+        "filter_max_packets": max_pkts,
         "filter_skip_conditions": skip_conds,
+        "filter_block_wallets": block_wallets,
+        "filter_block_tokens": block_tokens,
     }
 
 

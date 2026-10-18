@@ -24,6 +24,7 @@ const minRules = ref<MinRule[]>([])
 const skipConditions = ref<string[]>([])
 const blockWallets = ref<string[]>([])
 const blockTokens = ref("")
+const maxPackets = ref("")
 
 const CURRENCY_SUGGESTIONS = ["USDT", "CNY", "KKCOIN", "WLCOIN", "JIBA", "TRX"]
 // 钱包黑名单可选项（与 core/detector.py WALLET_LABELS 对齐）
@@ -69,6 +70,7 @@ function applySettings(s: Settings) {
     .map((c) => c.trim())
     .filter(Boolean)
   blockTokens.value = s.filter_block_tokens || ""
+  maxPackets.value = s.filter_max_packets || "0"
 
   minRules.value = []
   if (s.filter_min_amounts) {
@@ -154,6 +156,7 @@ async function saveFilters() {
       filter_skip_conditions: skipConditions.value.join(","),
       filter_block_wallets: blockWallets.value.join(","),
       filter_block_tokens: blockTokens.value,
+      filter_max_packets: maxPackets.value,
     }
     applySettings(await api.updateSettings(payload))
     ElMessage.success("领取策略已保存，对运行中账号实时生效")
@@ -258,6 +261,14 @@ onMounted(load)
           </div>
         </el-form-item>
 
+        <el-form-item label="份数上限（防空投）">
+          <el-input v-model="maxPackets" inputmode="numeric" placeholder="例如 100" class="max-packets-input" />
+          <div class="hint">
+            红包总份数（「剩余 x/N」的 N）超过此值即跳过，用于屏蔽空投类无限份数红包。
+            填 0 或留空表示不限制。
+          </div>
+        </el-form-item>
+
         <el-form-item label="钱包黑名单（强屏蔽）">
           <el-checkbox-group v-model="blockWallets">
             <el-checkbox v-for="w in WALLET_OPTIONS" :key="w.value" :value="w.value">
@@ -276,8 +287,8 @@ onMounted(load)
           />
           <div class="hint">
             扫描红包整条消息文本（含备注），命中任一关键词即跳过，大小写不敏感。
-            例如填 <b>kkcoin,kk币,jbcoin,jiba币</b> 可屏蔽 kkpay 的 kk 系列币和 dlqb 的鸡巴币，
-            不受红包备注里其它金额（如 10000u）干扰。
+            此外系统还会按钱包原生币种拦截：例如填 <b>kkcoin</b> 后，KKPay 钱包的红包
+            即使备注写"1000u"也会被跳过（不依赖文案解析）。
           </div>
         </el-form-item>
 
