@@ -21,7 +21,7 @@ from core.notifier import broadcast_channel
 from core.reporter import build_detect_report, build_summary_report
 
 from .db import SessionLocal
-from .models import Account, GrabRecord
+from .models import Account, GrabRecord, WebappLog
 from .settings_store import build_runconfig
 
 log = logging.getLogger("backend.runner")
@@ -261,6 +261,26 @@ class Runner:
                     report=rec.get("report")))
                 await s.commit()
 
+        async def on_webapp_log(rec: dict):
+            async with SessionLocal() as s:
+                s.add(WebappLog(
+                    account_id=aid,
+                    account_name=rec.get("account_name"),
+                    chat=rec.get("chat"),
+                    bot=rec.get("bot"),
+                    step=rec.get("step") or "start",
+                    ok=rec.get("ok", False),
+                    fail_reason=rec.get("fail_reason"),
+                    amount=rec.get("amount"),
+                    winner=rec.get("winner"),
+                    output=rec.get("output"),
+                    ms_webview=rec.get("ms_webview"),
+                    ms_submit=rec.get("ms_submit"),
+                    ms_result=rec.get("ms_result"),
+                    total_ms=rec.get("total_ms"),
+                    detail=rec.get("detail")))
+                await s.commit()
+
         async def on_ready(g: OKPayGrabber):
             await self._sync_name(aid, g)
 
@@ -269,7 +289,7 @@ class Runner:
 
         grabber = OKPayGrabber(
             run=run, on_record=on_record, on_ready=on_ready,
-            on_redpacket=on_redpacket)
+            on_redpacket=on_redpacket, on_webapp_log=on_webapp_log)
         task = asyncio.create_task(self._run(aid, grabber))
         self._runs[aid] = {"grabber": grabber, "task": task, "started_at": time.time()}
         await self._set_status(aid, "running")

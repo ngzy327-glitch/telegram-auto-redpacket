@@ -20,6 +20,7 @@ import type {
   RecordPage,
   RecordStats,
   Settings,
+  WebappLogPage,
 } from "@/types"
 
 const http = axios.create({
@@ -170,6 +171,14 @@ export const api = {
       .then((r) => r.data),
   getRecordStats: () =>
     http.get<RecordStats>("/records/stats").then((r) => r.data),
+
+  // —— WebApp 领取日志 ——
+  getWebappLogs: (page = 1, size = 20, result = "") =>
+    http
+      .get<WebappLogPage>("/webapp-logs", { params: { page, size, result } })
+      .then((r) => r.data),
+  clearWebappLogs: () =>
+    http.delete<{ ok: boolean; deleted: number }>("/webapp-logs").then((r) => r.data),
 
   // —— 秒包群组 ——
   listGroups: () =>

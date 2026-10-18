@@ -146,6 +146,40 @@ class BlockRule(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class WebappLog(Base):
+    """WebApp 网页验证领取日志：一次领取一行，只保留关键节点。
+
+    step 表示最终到达的阶段（用于定位卡在哪步）：
+      start   已发 /start，但没收到验证 WebView
+      webview 验证页已打开，但没有任何线路提交成功
+      submit  验证码已提交，bot 未在超时内回执
+      done    bot 已回执（成功/失败文本）
+    ms_* 为各阶段耗时（毫秒）。
+    """
+    __tablename__ = "webapp_logs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True, index=True)
+    account_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    chat: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    bot: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    step: Mapped[str] = mapped_column(String(16), default="start")
+    ok: Mapped[bool] = mapped_column(Boolean, default=False)
+    fail_reason: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    amount: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    winner: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    output: Mapped[str | None] = mapped_column(Text, nullable=True)  # bot 回执原文
+    # 阶段耗时（毫秒）：点击网页 / 执行操作(识别+提交) / 等待回执 / 总计
+    ms_webview: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ms_submit: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ms_result: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    total_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    detail: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON 各模型线路明细
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True)
+
+
 class GrabRecord(Base):
     """抢包记录（供 Web 端可视化）。"""
     __tablename__ = "grab_records"

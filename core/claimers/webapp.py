@@ -27,9 +27,27 @@ Message = types.Message
 from ..browser import launch_browser
 from ..config import config
 from ..vision.solver import INJECT_LABELS_JS
-from .base import EMPTY_KW, ClaimResult, extract_amount
+from .base import EMPTY_KW, ClaimResult, derive_error_reason, extract_amount
 
 log = logging.getLogger("core.webapp")
+
+# 单条模型线路失败原因码 → 控制台展示文案
+_LINE_FAIL_LABEL = {
+    "request_failed": "打开验证页失败",
+    "page_not_ready": "验证页未就绪/已过期",
+    "solve_failed": "AI识别失败",
+    "verify_failed": "验证失败（识别有误）",
+    "browser_error": "浏览器异常",
+    "unknown": "未提交",
+}
+
+# bot 回执失败归因码 → 控制台展示文案
+_RESULT_FAIL_LABEL = {
+    "exhausted": "已被领完/已过期",
+    "blocked": "条件不满足或被限制",
+    "wrong_captcha": "验证码错误",
+    "premium": "需要 Premium 会员",
+}
 
 
 async def solve_captcha_page(url, solver, browser=None, model=None, tag="",
@@ -55,6 +73,8 @@ async def solve_captcha_page(url, solver, browser=None, model=None, tag="",
             await page.wait_for_selector(".char-box", timeout=6000)
         except Exception:
             log.warning(f"{tg}验证页未就绪/已过期")
+            if timings is not None:
+                timings["fail"] = "page_not_ready"
             return False
         # 图片就绪（best-effort，不阻塞太久）
         try:
@@ -80,6 +100,8 @@ async def solve_captcha_page(url, solver, browser=None, model=None, tag="",
         clicks = await solver.solve(screenshot, model=model, api_key=api_key, base_url=base_url)
         if not clicks:
             log.error(f"{tg}识别失败")
+            if timings is not None:
+                timings["fail"] = "solve_failed"
             return False
 
         # 5) 按 data-index 点击（免疫 reflow 重排）
@@ -101,6 +123,8 @@ async def solve_captcha_page(url, solver, browser=None, model=None, tag="",
             txt = await page.evaluate("() => document.body.innerText")
             if "验证失败" in txt:
                 log.debug(f"{tg}验证失败（识别有误）")
+                if timings is not None:
+                    timings["fail"] = "verify_failed"
                 return False
             log.debug(f"{tg}验证通过")
             return True
@@ -111,6 +135,8 @@ async def solve_captcha_page(url, solver, browser=None, model=None, tag="",
 
     except Exception as e:
         log.error(f"{tg}浏览器异常: {e}")
+        if timings is not None and "fail" not in timings:
+            timings["fail"] = "browser_error"
         return False
     finally:
         try:
@@ -148,6 +174,29 @@ class WebappClaimer:
         if "频繁" in t or "頻繁" in t:
             return ("fail", t)
         return None
+
+    @staticmethod
+    def _result_fail_label(text: str) -> str:
+        """bot 失败回执 → 中文归因（无法归因时取回执首行兜底）。"""
+        label = _RESULT_FAIL_LABEL.get(derive_error_reason(text) or "")
+        if label:
+            return label
+        if "频繁" in text or "頻繁" in text:
+            return "操作频繁"
+        first = (text or "").strip().splitlines()
+        return (first[0][:60] if first else "") or "领取失败"
+
+    @staticmethod
+    def _aggregate_line_fails(lines: list[dict]) -> str:
+        """汇总各模型线路失败原因，如「AI识别失败×2、验证失败（识别有误）」。"""
+        from collections import Counter
+        labels = [_LINE_FAIL_LABEL.get(l.get("reason") or "unknown",
+                                       l.get("reason") or "未提交")
+                  for l in lines if not l.get("ok")]
+        if not labels:
+            return "所有线路均未提交"
+        cnt = Counter(labels)
+        return "、".join(f"{k}×{v}" if v > 1 else k for k, v in cnt.items())
 
     async def claim(self, msg: Message | None, start_param: str, tm: dict,
                     bot_username: str | None = None) -> ClaimResult:
@@ -188,6 +237,8 @@ class WebappClaimer:
                 webview_url = await asyncio.wait_for(wv_fut, 6.0)
             except asyncio.TimeoutError:
                 log.debug("未收到验证 WebView，可重试")
+                tm["step"] = "start"
+                tm["fail_reason"] = "6秒内未收到验证页面"
                 return ClaimResult(False, retryable=True)
             tm["webview"] = time.time()
 
@@ -202,6 +253,18 @@ class WebappClaimer:
             oks = [r for r in valid if r.get("ok") and r.get("submit")]
             winner = min(oks, key=lambda r: r["submit"])["tag"] if oks else None
 
+            # 各模型线路明细（含从打开页面到提交的耗时 ms），供控制台展开排查
+            t_wv = tm["webview"]
+            tm["lines"] = [
+                {
+                    "tag": r.get("tag"),
+                    "ok": bool(r.get("ok")),
+                    "ms": int((r["submit"] - t_wv) * 1000) if r.get("submit") else None,
+                    "reason": None if r.get("ok") else (r.get("reason") or "unknown"),
+                }
+                for r in valid
+            ]
+
             # 等到账结果（延长到 15 秒，bot 响应可能慢）
             try:
                 status, text = await asyncio.wait_for(res_fut, 15.0)
@@ -214,15 +277,25 @@ class WebappClaimer:
         amount = extract_amount(text)
         if status == "ok":
             tm["amount"] = time.time()
+            tm["step"] = "done"
+            tm["output"] = text.strip()
             log.info(f"💰 {text.strip()}")
             return ClaimResult(True, amount, winner, retryable=False)
         if status == "fail" and text:
+            tm["step"] = "done"
+            tm["output"] = text.strip()
+            tm["feedback"] = text
+            tm["fail_reason"] = self._result_fail_label(text)
             log.info(f"🈳 {text.strip()}")
             return ClaimResult(False, amount, winner, retryable=False)
         # 验证码已提交但未收到到账反馈 → 视为已提交成功（不重试，不再发 /start）
         if oks:
+            tm["step"] = "submit"
+            tm["output"] = "验证码已提交，等待 bot 确认"
             log.info(f"✅ 验证码已提交（{winner}），等待 bot 确认")
             return ClaimResult(True, None, winner, retryable=False)
+        tm["step"] = "webview"
+        tm["fail_reason"] = self._aggregate_line_fails(tm.get("lines", []))
         return ClaimResult(False, None, winner, retryable=False)
 
     async def _pipeline(self, bot, webview_url, provider) -> dict:
@@ -239,8 +312,13 @@ class WebappClaimer:
             ))
         except Exception as e:
             log.error(f"[{tag}] RequestWebView失败: {e}")
-            return {"tag": tag, "ok": False, "submit": None}
+            return {"tag": tag, "ok": False, "submit": None, "reason": "request_failed"}
         ok = await solve_captcha_page(
             res.url, self.solver, self.browser, model=model, tag=tag, timings=sub_tm,
             api_key=api_key, base_url=base_url)
-        return {"tag": tag, "ok": ok, "submit": sub_tm.get("submit")}
+        return {
+            "tag": tag,
+            "ok": ok,
+            "submit": sub_tm.get("submit"),
+            "reason": None if ok else (sub_tm.get("fail") or "unknown"),
+        }

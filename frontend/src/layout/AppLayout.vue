@@ -8,6 +8,7 @@ import {
   Expand,
   Fold,
   Grid,
+  Monitor,
   Odometer,
   Present,
   Setting,
@@ -34,6 +35,7 @@ const NAV = [
   { index: "/groups", label: "秒包管理", icon: ChatLineSquare, adminOnly: false },
   { index: "/blocklist", label: "屏蔽管理", icon: CircleClose, adminOnly: false },
   { index: "/records", label: "秒包记录", icon: DataLine, adminOnly: false },
+  { index: "/webapp-logs", label: "WebApp 日志", icon: Monitor, adminOnly: false },
   { index: "/users", label: "用户管理", icon: UserFilled, adminOnly: true },
   { index: "/settings", label: "系统配置", icon: Setting, adminOnly: true },
 ]
