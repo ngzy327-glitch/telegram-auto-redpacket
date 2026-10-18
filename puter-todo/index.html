@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>云待办 · Puter To-Do</title>
+<script src="https://js.puter.com/v2/"></script>
+<style>
+  :root {
+    --bg1: #6a5cff;
+    --bg2: #8f5cff;
+    --card: #ffffff;
+    --text: #1f2430;
+    --muted: #8a90a2;
+    --line: #eceef5;
+    --done: #b6bbcc;
+    --danger: #ff5c7a;
+    --shadow: 0 20px 60px rgba(60, 50, 140, .25);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+                 "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    min-height: 100vh;
+    background: linear-gradient(135deg, var(--bg1), var(--bg2));
+    display: flex; align-items: flex-start; justify-content: center;
+    padding: 48px 16px 32px;
+    color: var(--text);
+  }
+  .app {
+    width: 100%; max-width: 520px;
+    background: var(--card);
+    border-radius: 20px;
+    box-shadow: var(--shadow);
+    overflow: hidden;
+  }
+  header {
+    padding: 28px 28px 20px;
+    background: linear-gradient(135deg, var(--bg1), var(--bg2));
+    color: #fff;
+  }
+  header h1 { font-size: 24px; font-weight: 700; letter-spacing: .5px; }
+  header p { margin-top: 6px; font-size: 13px; opacity: .85; }
+  .sync {
+    margin-top: 12px; font-size: 12px; opacity: .9;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: #ffd66b; display: inline-block; }
+  .dot.ok { background: #6bffb0; }
+  .dot.err { background: #ff8a8a; }
+
+  .composer { display: flex; gap: 10px; padding: 20px 28px 0; }
+  .composer input {
+    flex: 1; height: 46px; padding: 0 16px;
+    border: 2px solid var(--line); border-radius: 12px;
+    font-size: 15px; outline: none; transition: border-color .15s;
+  }
+  .composer input:focus { border-color: var(--bg1); }
+  .composer button {
+    height: 46px; padding: 0 20px; border: none; border-radius: 12px;
+    background: linear-gradient(135deg, var(--bg1), var(--bg2));
+    color: #fff; font-size: 15px; font-weight: 600; cursor: pointer;
+    transition: transform .1s, opacity .15s;
+  }
+  .composer button:hover { opacity: .92; }
+  .composer button:active { transform: scale(.96); }
+
+  .filters {
+    display: flex; gap: 8px; padding: 16px 28px 0;
+  }
+  .filters button {
+    border: none; background: #f2f3f9; color: var(--muted);
+    padding: 6px 14px; border-radius: 999px; font-size: 13px; cursor: pointer;
+    transition: all .15s;
+  }
+  .filters button.active { background: var(--bg1); color: #fff; }
+
+  ul#list { list-style: none; padding: 12px 20px; max-height: 46vh; overflow-y: auto; }
+  li.item {
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px 8px; border-radius: 10px;
+    transition: background .12s;
+  }
+  li.item:hover { background: #f7f8fd; }
+  li.item:hover .del { opacity: 1; }
+  .check {
+    width: 22px; height: 22px; flex: none; cursor: pointer;
+    border: 2px solid #cfd3e2; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; color: #fff; transition: all .15s;
+  }
+  .check.on { background: var(--bg1); border-color: var(--bg1); }
+  .label {
+    flex: 1; font-size: 15px; line-height: 1.5;
+    word-break: break-word; cursor: pointer;
+  }
+  .label.done { color: var(--done); text-decoration: line-through; }
+  .del {
+    flex: none; border: none; background: none; color: var(--danger);
+    font-size: 18px; cursor: pointer; opacity: 0; transition: opacity .15s;
+    padding: 4px 6px; line-height: 1;
+  }
+  .empty {
+    text-align: center; color: var(--muted); font-size: 14px;
+    padding: 40px 0 36px;
+  }
+
+  footer.bar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 28px 16px; border-top: 1px solid var(--line);
+    font-size: 13px; color: var(--muted);
+  }
+  footer.bar button {
+    border: none; background: none; color: var(--muted);
+    font-size: 13px; cursor: pointer;
+  }
+  footer.bar button:hover { color: var(--danger); }
+  .credit {
+    text-align: center; padding: 0 0 18px; font-size: 12px; color: rgba(255,255,255,.85);
+  }
+  .credit a { color: #fff; text-decoration: underline; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>📝 云待办</h1>
+    <p>数据通过 Puter 云端键值存储保存，换台电脑登录也在</p>
+    <div class="sync"><span class="dot" id="dot"></span><span id="status">正在连接云端…</span></div>
+  </header>
+
+  <div class="composer">
+    <input id="input" type="text" placeholder="添加一条待办，回车确认" maxlength="200" autocomplete="off">
+    <button id="addBtn">添加</button>
+  </div>
+
+  <div class="filters">
+    <button data-f="all" class="active">全部</button>
+    <button data-f="active">未完成</button>
+    <button data-f="done">已完成</button>
+  </div>
+
+  <ul id="list"></ul>
+
+  <footer class="bar">
+    <span id="count">0 项未完成</span>
+    <button id="clearDone">清除已完成</button>
+  </footer>
+</div>
+<div class="credit">Powered by <a href="https://developer.puter.com" target="_blank" rel="noopener">Puter</a></div>
+
+<script>
+const KV_KEY = 'todo-items-v1';
+
+const state = {
+  todos: [],          // {id, text, done, createdAt}
+  filter: 'all',
+  loaded: false,
+  saveTimer: null,
+  saving: false,
+};
+
+const $list = document.getElementById('list');
+const $input = document.getElementById('input');
+const $count = document.getElementById('count');
+const $status = document.getElementById('status');
+const $dot = document.getElementById('dot');
+
+function setSync(mode, text) {
+  $dot.className = 'dot' + (mode === 'ok' ? ' ok' : mode === 'err' ? ' err' : '');
+  $status.textContent = text;
+}
+
+// ── 云端读写 ──────────────────────────────────────────────
+async function loadTodos() {
+  try {
+    const data = await puter.kv.get(KV_KEY);
+    state.todos = Array.isArray(data) ? data : [];
+    state.loaded = true;
+    setSync('ok', '云端已同步');
+  } catch (e) {
+    console.error(e);
+    state.todos = [];
+    state.loaded = true;
+    setSync('err', '云端读取失败，改动仅保留在本次页面');
+  }
+  render();
+}
+
+function scheduleSave() {
+  if (!state.loaded) return;
+  setSync('', '保存中…');
+  clearTimeout(state.saveTimer);
+  state.saveTimer = setTimeout(saveTodos, 350);
+}
+
+async function saveTodos() {
+  if (state.saving) return;
+  state.saving = true;
+  try {
+    await puter.kv.set(KV_KEY, state.todos);
+    setSync('ok', '云端已同步');
+  } catch (e) {
+    console.error(e);
+    setSync('err', '保存失败，将在下次改动时重试');
+  } finally {
+    state.saving = false;
+  }
+}
+
+// ── 操作 ──────────────────────────────────────────────────
+function addTodo() {
+  const text = $input.value.trim();
+  if (!text) return;
+  state.todos.unshift({
+    id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
+    text, done: false, createdAt: Date.now(),
+  });
+  $input.value = '';
+  scheduleSave();
+  render();
+}
+
+function toggle(id) {
+  const t = state.todos.find(t => t.id === id);
+  if (t) { t.done = !t.done; scheduleSave(); render(); }
+}
+
+function remove(id) {
+  state.todos = state.todos.filter(t => t.id !== id);
+  scheduleSave();
+  render();
+}
+
+function clearDone() {
+  const before = state.todos.length;
+  state.todos = state.todos.filter(t => !t.done);
+  if (state.todos.length !== before) { scheduleSave(); render(); }
+}
+
+// ── 渲染 ──────────────────────────────────────────────────
+function render() {
+  const shown = state.todos.filter(t =>
+    state.filter === 'all' ? true :
+    state.filter === 'active' ? !t.done : t.done);
+
+  $list.innerHTML = '';
+  if (shown.length === 0) {
+    const li = document.createElement('li');
+    li.className = 'empty';
+    li.textContent = state.todos.length === 0
+      ? '还没有待办，先添加一条吧 ✨'
+      : '这个分类下空空如也';
+    $list.appendChild(li);
+  } else {
+    for (const t of shown) {
+      const li = document.createElement('li');
+      li.className = 'item';
+
+      const check = document.createElement('span');
+      check.className = 'check' + (t.done ? ' on' : '');
+      check.textContent = t.done ? '✓' : '';
+      check.title = '切换完成状态';
+      check.onclick = () => toggle(t.id);
+
+      const label = document.createElement('span');
+      label.className = 'label' + (t.done ? ' done' : '');
+      label.textContent = t.text;
+      label.onclick = () => toggle(t.id);
+
+      const del = document.createElement('button');
+      del.className = 'del';
+      del.textContent = '✕';
+      del.title = '删除';
+      del.onclick = () => remove(t.id);
+
+      li.append(check, label, del);
+      $list.appendChild(li);
+    }
+  }
+
+  const left = state.todos.filter(t => !t.done).length;
+  $count.textContent = `${left} 项未完成`;
+}
+
+// ── 事件绑定 ──────────────────────────────────────────────
+document.getElementById('addBtn').onclick = addTodo;
+$input.addEventListener('keydown', e => { if (e.key === 'Enter') addTodo(); });
+document.getElementById('clearDone').onclick = clearDone;
+document.querySelectorAll('.filters button').forEach(btn => {
+  btn.onclick = () => {
+    state.filter = btn.dataset.f;
+    document.querySelectorAll('.filters button').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    render();
+  };
+});
+
+// 启动：加载云端数据（首次会触发 Puter 登录授权弹窗）
+loadTodos();
+</script>
+</body>
+</html>
