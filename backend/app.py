@@ -18,7 +18,7 @@ from core.config import config
 from .auth import get_current_user, hash_password, make_token, seed_admin_user, verify_password
 from .db import SessionLocal, get_session, init_db
 from .models import Account, User
-from .routers import accounts, blocklist, groups, modules, overview, records, settings
+from .routers import accounts, blocklist, groups, modules, overview, records, settings, webapp_logs
 from .runner import runner
 from .settings_store import seed_defaults
 
@@ -97,6 +97,7 @@ app.include_router(settings.router)
 app.include_router(modules.router)
 app.include_router(groups.router)
 app.include_router(records.router)
+app.include_router(webapp_logs.router)
 app.include_router(blocklist.router)
 app.include_router(overview.router)
 

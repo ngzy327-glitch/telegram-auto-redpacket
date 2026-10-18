@@ -116,6 +116,58 @@ export interface RecordStats {
   by_wallet: { wallet: string; count: number }[]
 }
 
+// —— WebApp 领取日志 ——
+export interface WebappLogLine {
+  tag: string
+  ok: boolean
+  ms: number | null
+  reason: string | null
+}
+
+export interface WebappLogItem {
+  id: number
+  account_name: string
+  chat: string
+  bot: string
+  step: "start" | "webview" | "submit" | "done" | string
+  ok: boolean
+  fail_reason: string
+  amount: string
+  winner: string
+  output: string
+  ms_webview: number | null
+  ms_submit: number | null
+  ms_result: number | null
+  total_ms: number | null
+  lines: WebappLogLine[]
+  created_at: string
+}
+
+export interface WebappLogPage {
+  total: number
+  page: number
+  size: number
+  items: WebappLogItem[]
+}
+
+// 最终到达阶段（定位卡在哪步）
+export const WEBAPP_STEP_LABEL: Record<string, string> = {
+  start: "①发 /start",
+  webview: "②打开网页",
+  submit: "③已提交",
+  done: "④已完成",
+}
+
+// 单条模型线路失败原因码 → 文案（与后端 core/claimers/webapp.py 对齐）
+export const WEBAPP_LINE_REASON: Record<string, string> = {
+  request_failed: "打开验证页失败",
+  page_not_ready: "验证页未就绪/已过期",
+  solve_failed: "AI识别失败",
+  verify_failed: "验证失败（识别有误）",
+  browser_error: "浏览器异常",
+  unknown: "未提交",
+}
+
 // key 集合与后端 core/detector.py WALLET_LABELS 对齐。
 // 展示文案约定：英文品牌（OKPay/KKPay）不带后缀，中文品牌带「钱包」后缀。
 export const WALLET_LABEL: Record<string, string> = {

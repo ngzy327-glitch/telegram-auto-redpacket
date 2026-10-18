@@ -67,12 +67,14 @@ def _parse_proxy(url: str | None):
 
 class OKPayGrabber:
     def __init__(self, run: RunConfig | None = None, on_record=None, on_ready=None,
-                 on_redpacket=None):
+                 on_redpacket=None, on_webapp_log=None):
         self.run = run or RunConfig.from_config()
         self.on_record = on_record
         self.on_ready = on_ready  # async callback(grabber) 连接就绪后调用
         # async callback(chat_id, msg_id, rp, chat_title, msg)：检测到红包交给 Runner 统一调度
         self.on_redpacket = on_redpacket
+        # async callback(record)：webapp 领取关键节点日志（点击网页/执行操作/结果/金额）
+        self.on_webapp_log = on_webapp_log
         if not self.run.session:
             raise ValueError("缺少账号 StringSession：请先通过 Web 端登录再启动监听")
         proxy = _parse_proxy(self.run.proxy)
@@ -536,6 +538,8 @@ class OKPayGrabber:
         r = await self._webapp.claim(None, rp.start_param, tm, bot_username=rp.webapp_bot)
         tm["done"] = time.time()
 
+        await self._emit_webapp_log(chat_title, rp, r, tm)
+
         if r.ok:
             self._done.add(key)
             self.stats["success"] += 1
@@ -547,6 +551,41 @@ class OKPayGrabber:
         r.error_reason = r.error_reason or derive_error_reason(tm.get("feedback"))
         await self._report_simple(chat_title, rp, r, tm, chat_id=key[0], msg_id=key[1])
         return r
+
+    async def _emit_webapp_log(self, chat_title, rp, r, tm):
+        """把一次 webapp 领取的关键节点（点击网页/执行操作/结果/金额）发给控制台日志模块。"""
+        if not self.on_webapp_log:
+            return
+        t_start = tm.get("start_sent")
+        t_wv = tm.get("webview")
+        t_submit = tm.get("submit")
+        t_end = tm.get("amount") or tm.get("done")
+
+        def _ms(a, b):
+            return int((a - b) * 1000) if a is not None and b is not None else None
+
+        import json
+        record = {
+            "account_name": self.me.first_name if self.me else None,
+            "chat": chat_title,
+            "bot": f"@{rp.webapp_bot}" if rp.webapp_bot else "",
+            "step": tm.get("step") or "start",
+            "ok": bool(r.ok),
+            "fail_reason": tm.get("fail_reason"),
+            "amount": r.amount,
+            "winner": r.winner,
+            "output": tm.get("output"),
+            "ms_webview": _ms(t_wv, t_start),
+            "ms_submit": _ms(t_submit, t_wv),
+            "ms_result": _ms(t_end, t_submit),
+            "total_ms": _ms(t_end, t_start),
+            "detail": json.dumps(tm.get("lines", []), ensure_ascii=False)
+                      if tm.get("lines") else None,
+        }
+        try:
+            await self.on_webapp_log(record)
+        except Exception as e:
+            log.debug(f"webapp 日志持久化失败: {e}")
 
     async def _run_dm_captcha_direct(self, rp, key, chat_title):
         """dm_captcha 快路径：/start → 私聊验证码 → 解题 → 领取。"""

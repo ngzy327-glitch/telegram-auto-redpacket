@@ -54,6 +54,12 @@ export const router = createRouter({
           component: () => import("@/views/RecordsView.vue"),
         },
         {
+          path: "webapp-logs",
+          name: "webapp-logs",
+          meta: { title: "WebApp 日志" },
+          component: () => import("@/views/WebappLogsView.vue"),
+        },
+        {
           path: "settings",
           name: "settings",
           meta: { title: "系统配置" },
