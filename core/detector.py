@@ -365,11 +365,32 @@ def extract_start(msg) -> tuple[str, str] | None:
     return None
 
 
+def has_direct_keyword_button(msg, keywords: list[str] | None = None) -> bool:
+    """是否存在含指定关键词的 callback 按钮（不返回 data，仅做门控判断）。
+
+    用于放宽 is_red_packet 门槛：消息正文不含红包关键词、但按钮含「领取」时，
+    仍应进入 direct 判定链路，避免漏识别。"""
+    kws = keywords or ["领取"]
+    for row in _rows(msg):
+        for btn in row.buttons:
+            if not isinstance(btn, KeyboardButtonCallback):
+                continue
+            text = clean(btn.text)
+            if "解锁" in text or "已锁定" in text:
+                continue
+            if any(kw in text for kw in kws):
+                return True
+    return False
+
+
 def find_direct_claim(msg, keywords: list[str] | None = None) -> bytes | None:
     """含指定关键词的 callback 按钮 → 直接领取（子串匹配，兼容各类钱包的隐藏字符/emoji）。
 
     排除锁定按钮：fllqb 的「🧧解锁后领取，管理叫解锁是⚠️诈骗」含「领取」却是锁按钮
-    （data=mhblock...），文字含「解锁/已锁定」或 data 命中锁标记一律跳过。"""
+    （data=mhblock...），文字含「解锁/已锁定」或 data 命中锁标记一律跳过。
+
+    注意：本函数只看按钮文字，不校验钱包来源；钱包校验由调用方（classify）负责，
+    避免广告 bot 的「领取优惠」按钮被误点。"""
     kws = keywords or ["领取"]
     for row in _rows(msg):
         for btn in row.buttons:
@@ -556,7 +577,11 @@ def classify(msg, direct_keywords: list[str] | None = None, decoded_text: str | 
     locked（未解锁）会返回 kind='locked' 的 RedPacket（只通知不领取）。
     领取分类优先级：direct > captcha > fulilai > webapp(vweb--) > dm_captcha(其余 URL)。"""
     text = decoded_text or getattr(msg, "text", None) or getattr(msg, "raw_text", None) or ""
-    if not getattr(msg, "reply_markup", None) or not is_red_packet(text):
+    if not getattr(msg, "reply_markup", None):
+        return None
+    # 门控：正文命中红包关键词 / 算式 / 验证码关键词，或按钮含「领取」关键词。
+    # 放宽按钮判定是为了避免正文文案特殊的钱包红包被漏识别（issue2）。
+    if not (is_red_packet(text) or has_direct_keyword_button(msg, direct_keywords)):
         return None
 
     # 识别维度：钱包 / 状态 / 条件 / 元数据（与具体领取方式无关，全 kind 共用）
@@ -584,8 +609,9 @@ def classify(msg, direct_keywords: list[str] | None = None, decoded_text: str | 
         return _wrap(RedPacket("locked", state="locked"))
 
     # 1) 关键词领取（callback「领取」按钮，已排除锁按钮）
+    #    钱包来源校验：只点击已知钱包 bot 的领取按钮，避免广告 bot「领取优惠」被误点（issue1）。
     data = find_direct_claim(msg, direct_keywords)
-    if data:
+    if data and wallet != "unknown":
         return _wrap(RedPacket("direct", direct_data=data))
 
     # 2) 窗口验证码（群内算式或明文验证码 + callback 选项按钮）

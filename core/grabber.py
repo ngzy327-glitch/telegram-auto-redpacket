@@ -348,12 +348,28 @@ class OKPayGrabber:
             return
 
         if not rp:
-            # 诊断日志：有按钮但未被识别为红包时打印原因，方便排查文案不匹配
-            if getattr(msg, "reply_markup", None) and text:
+            # 诊断日志：只要有按钮就打印（即使正文为空），便于排查「按钮含领取却未识别」。
+            # 输出钱包识别结果、关键词命中、按钮文字，方便定位漏识别或误判原因。
+            if getattr(msg, "reply_markup", None):
                 from .config import config as _cfg
+                from .detector import detect_wallet, has_direct_keyword_button
                 kw_hit = any(kw in text for kw in _cfg.red_packet_keywords)
+                btn_kw_hit = has_direct_keyword_button(msg, self.run.direct_keywords)
+                wallet = detect_wallet(msg)
+                # 收集所有 callback 按钮文字（clean 后），最多展示 3 个
+                btn_texts = []
+                for row in (getattr(getattr(msg, "reply_markup", None), "rows", None) or []):
+                    for btn in row.buttons:
+                        if hasattr(btn, "text") and btn.text:
+                            from .detector import clean as _clean
+                            btn_texts.append(_clean(btn.text))
+                        if len(btn_texts) >= 3:
+                            break
+                    if len(btn_texts) >= 3:
+                        break
                 log.info(f"🔍 未识别红包 [{chat_title}] chat_id={msg.chat_id} "
-                         f"关键词命中={kw_hit} 文本={text[:80]!r}")
+                         f"wallet={wallet} 正文关键词={kw_hit} 按钮关键词={btn_kw_hit} "
+                         f"buttons={btn_texts} 文本={text[:80]!r}")
             return
 
         if not self._chat_allowed(msg.chat_id):
