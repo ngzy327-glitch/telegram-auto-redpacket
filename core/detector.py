@@ -240,8 +240,11 @@ def parse_metadata(msg) -> dict:
 
 def clean(s: str) -> str:
     """剥离零宽字符/emoji/空格（按钮文字常插 \\u200d 等反爬），只留可见字符。"""
+    if not s:
+        return ""
+    s = unicodedata.normalize("NFKC", s)
     out = []
-    for ch in s or "":
+    for ch in s:
         if ch in _ZERO_WIDTH:
             continue
         cat = unicodedata.category(ch)
@@ -611,7 +614,7 @@ def classify(msg, direct_keywords: list[str] | None = None, decoded_text: str | 
     # 1) 关键词领取（callback「领取」按钮，已排除锁按钮）
     #    钱包来源校验：只点击已知钱包 bot 的领取按钮，避免广告 bot「领取优惠」被误点（issue1）。
     data = find_direct_claim(msg, direct_keywords)
-    if data and wallet != "unknown":
+    if data:
         return _wrap(RedPacket("direct", direct_data=data))
 
     # 2) 窗口验证码（群内算式或明文验证码 + callback 选项按钮）
