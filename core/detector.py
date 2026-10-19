@@ -423,29 +423,6 @@ def _is_lock_button(btn) -> bool:
     return False
 
 
-def find_sole_callback(msg, keywords: list[str] | None = None) -> bytes | None:
-    """唯一非锁 callback 按钮，且按钮文字含直接关键词 → 直接点击。
-
-    关键词不命中一律不点（防误点无关按钮）；关键词在控制台「直接关键词」配置，
-    按钮文字特殊时看 🔍 未识别日志里的 buttons= 再补充关键词即可。"""
-    kws = keywords or ["领取"]
-    sole = None
-    for row in _rows(msg):
-        for btn in row.buttons:
-            if btn_type(btn) != "callback":
-                continue
-            if _is_lock_button(btn):
-                continue
-            if sole is not None:
-                return None  # 多于一个 → 验证码/多选项场景，交给 captcha 分支
-            sole = btn
-    if sole is None:
-        return None
-    if not any(kw in clean(btn_text(sole)) for kw in kws):
-        return None
-    return cb_data(sole)
-
-
 def find_webview_button(msg, keywords: list[str] | None = None) -> str | None:
     """inline WebView（小程序）按钮，且按钮文字含直接关键词 → 返回其 URL。
 
@@ -651,24 +628,22 @@ def classify(msg, direct_keywords: list[str] | None = None, decoded_text: str | 
     返回 None 仅当：非红包 / 已领完 / 无可识别按钮。
     locked（未解锁）会返回 kind='locked' 的 RedPacket（只通知不领取）。
 
-    万能领取策略（结构分发 + 关键词校验，双保险）：
-    - 门控：已知钱包（via_bot/from_id/callback前缀/URL bot名 四级识别）→ 放行识别
-      （正文文案再怪也能认出是红包）；未知钱包 → 退回关键词模式，防广告 bot 误点。
-    - 点击：任何按钮被点击/触发前，按钮文字必须含「直接关键词」（控制台可配），
-      未命中一律不点；按钮文字特殊时看 🔍 未识别日志补充关键词。
+    统一门槛（所有钱包一视同仁，无放行白名单）：
+    - 门控：正文命中红包关键词，或按钮文字含「直接关键词」。
+      钱包 bot 的余额通知、系统消息等按钮不含关键词 → 完全忽略。
+    - 点击：按钮文字含「直接关键词」才点；「领取红包🧧」点、「余额💰」不点。
+      按钮文字特殊时看 🔍 未识别日志里的 buttons= 再补充关键词。
     领取分类优先级：direct > captcha > fulilai > webapp(vweb--) > dm_captcha(其余 URL)。"""
     text = decoded_text or getattr(msg, "text", None) or getattr(msg, "raw_text", None) or ""
     if not getattr(msg, "reply_markup", None):
         return None
 
+    # 统一门控（不做钱包放行：已知钱包的余额/系统消息等非红包一律不进流程）
+    if not (is_red_packet(text) or has_direct_keyword_button(msg, direct_keywords)):
+        return None
+
     # 识别维度：钱包 / 状态 / 条件 / 元数据（与具体领取方式无关，全 kind 共用）
     wallet = detect_wallet(msg)
-
-    # 万能门控：已知钱包放行识别（正文文案再怪也能认出红包）；
-    # 未知钱包退回关键词模式，避免广告 bot 的「领取优惠」被误点。
-    if wallet == "unknown":
-        if not (is_red_packet(text) or has_direct_keyword_button(msg, direct_keywords)):
-            return None
 
     state = detect_state(msg)
     conditions = parse_conditions(msg)
@@ -722,14 +697,12 @@ def classify(msg, direct_keywords: list[str] | None = None, decoded_text: str | 
         startapp, packet_id = fll
         return _wrap(RedPacket("fulilai", fulilai_hash=packet_id, fulilai_startapp=startapp))
 
-    # 4) WebView（小程序）按钮直连：文字含直接关键词才触发（防误开广告小程序），
-    #    不经过 /start 省一步往返；仅已知钱包启用
-    if wallet != "unknown":
-        wv_url = find_webview_button(msg, direct_keywords)
-        if wv_url:
-            bot = detect_bot_username(msg)
-            if bot:
-                return _wrap(RedPacket("webapp", webview_url=wv_url, webapp_bot=bot))
+    # 4) WebView（小程序）按钮直连：文字含直接关键词才触发，不经过 /start 省一步往返
+    wv_url = find_webview_button(msg, direct_keywords)
+    if wv_url:
+        bot = detect_bot_username(msg)
+        if bot:
+            return _wrap(RedPacket("webapp", webview_url=wv_url, webapp_bot=bot))
 
     # 5) URL 按钮（t.me/bot?start=xxx）：start_param 以 vweb-- 开头即网页验证
     #    （okpay/kkpay/dlqb 共用 vweb 协议；不再硬编码 bot 白名单），其余按私信验证

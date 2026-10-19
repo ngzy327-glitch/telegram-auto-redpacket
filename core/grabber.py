@@ -341,15 +341,18 @@ class OKPayGrabber:
             return
 
         if not rp:
-            # 诊断日志：只要有按钮就打印（即使正文为空），便于排查「按钮含领取却未识别」。
-            # 输出钱包识别结果、关键词命中、按钮类型与文字，方便定位漏识别或误判原因。
+            # 诊断日志：仅对「疑似红包但没接住」的消息打印（门控已过但无领取载体），
+            # bot 余额通知等日常消息（门控未过）不打印，避免刷屏。
             if getattr(msg, "reply_markup", None):
                 from .config import config as _cfg
-                from .detector import detect_wallet, has_direct_keyword_button
+                from .detector import (detect_wallet, has_direct_keyword_button,
+                                       is_red_packet as _is_rp)
                 from .buttons import btn_text as _btn_text, btn_type as _btn_type
                 from .detector import clean as _clean
                 kw_hit = any(kw in text for kw in _cfg.red_packet_keywords)
                 btn_kw_hit = has_direct_keyword_button(msg, self.run.direct_keywords)
+                if not (_is_rp(text) or btn_kw_hit):
+                    return  # 门控未过（非红包）→ 不打日志
                 wallet = detect_wallet(msg)
                 # 收集所有按钮（类型+文字，兼容层统一新旧 telethon），最多展示 3 个
                 btn_texts = []
