@@ -17,14 +17,10 @@ from pathlib import Path
 from telethon import events
 from telethon.tl import functions, types
 
-# telethon 1.45+ 兼容：KeyboardButtonWebView → InlineButtonTypeWebView
-try:
-    KeyboardButtonWebView = types.KeyboardButtonWebView
-except AttributeError:
-    KeyboardButtonWebView = types.InlineButtonTypeWebView
 Message = types.Message
 
 from ..browser import launch_browser
+from ..buttons import btn_type, btn_url
 from ..config import config
 from ..vision.solver import INJECT_LABELS_JS
 from .base import EMPTY_KW, ClaimResult, derive_error_reason, extract_amount
@@ -201,7 +197,9 @@ class WebappClaimer:
         return "、".join(f"{k}×{v}" if v > 1 else k for k, v in cnt.items())
 
     async def claim(self, msg: Message | None, start_param: str, tm: dict,
-                    bot_username: str | None = None) -> ClaimResult:
+                    bot_username: str | None = None, direct_url: str | None = None) -> ClaimResult:
+        """direct_url：红包消息自带 WebView 按钮的直连 URL（万能领取路径），
+        有值时跳过 /start 往返，直接 RequestWebView。"""
         tm["mode"] = "verify"
         if bot_username:
             bot_entity = await self.client.get_input_entity(bot_username)
@@ -222,8 +220,10 @@ class WebappClaimer:
                 return
             for row in mk.rows:
                 for btn in row.buttons:
-                    if isinstance(btn, KeyboardButtonWebView) and not wv_fut.done():
-                        wv_fut.set_result(btn.url)
+                    if btn_type(btn) == "webview" and not wv_fut.done():
+                        url = btn_url(btn)
+                        if url:
+                            wv_fut.set_result(url)
 
         async def _res_handler(ev):
             r = self._classify(ev.message.text or "")
@@ -233,16 +233,21 @@ class WebappClaimer:
         self.client.add_event_handler(_wv_handler, events.NewMessage(from_users=bot_id))
         self.client.add_event_handler(_res_handler, events.NewMessage(from_users=bot_id))
         try:
-            await self.client.send_message(bot_entity, f"/start {start_param}")
-            tm["start_sent"] = time.time()
-            try:
-                webview_url = await asyncio.wait_for(wv_fut, 6.0)
-            except asyncio.TimeoutError:
-                log.debug("未收到验证 WebView，可重试")
-                tm["step"] = "start"
-                tm["fail_reason"] = "6秒内未收到验证页面"
-                return ClaimResult(False, retryable=True)
-            tm["webview"] = time.time()
+            if direct_url:
+                # 万能领取：红包消息自带 WebView 按钮，直接用其 URL
+                webview_url = direct_url
+                tm["webview"] = time.time()
+            else:
+                await self.client.send_message(bot_entity, f"/start {start_param}")
+                tm["start_sent"] = time.time()
+                try:
+                    webview_url = await asyncio.wait_for(wv_fut, 6.0)
+                except asyncio.TimeoutError:
+                    log.debug("未收到验证 WebView，可重试")
+                    tm["step"] = "start"
+                    tm["fail_reason"] = "6秒内未收到验证页面"
+                    return ClaimResult(False, retryable=True)
+                tm["webview"] = time.time()
 
             tasks = [self._pipeline(bot_entity, webview_url, p)
                      for p in self.providers]

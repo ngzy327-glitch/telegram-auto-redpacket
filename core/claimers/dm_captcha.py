@@ -17,12 +17,7 @@ import time
 from telethon import events
 from telethon.tl import functions, types
 
-# telethon 1.45+ 兼容：KeyboardButtonCallback → InlineButtonTypeCallback
-try:
-    KeyboardButtonCallback = types.KeyboardButtonCallback
-except AttributeError:
-    KeyboardButtonCallback = types.InlineButtonTypeCallback
-
+from ..buttons import btn_text, btn_type, cb_data
 from ..charset import MATH_RE, normalize_operand, solve_expr_with_buttons
 from .base import BLOCKED_KW, EMPTY_KW, SUCCESS_KW, WRONG_KW, ClaimResult, extract_amount
 
@@ -39,10 +34,10 @@ def _parse_dm_quiz(msg) -> tuple[str, list[tuple[str, bytes]]] | None:
     buttons: list[tuple[str, bytes]] = []
     for row in getattr(getattr(msg, "reply_markup", None), "rows", None) or []:
         for btn in row.buttons:
-            if isinstance(btn, KeyboardButtonCallback):
-                label = btn.text.strip()
+            if btn_type(btn) == "callback":
+                label = btn_text(btn).strip()
                 if label:
-                    buttons.append((label, btn.data))
+                    buttons.append((label, cb_data(btn)))
     return (expr, buttons) if buttons else None
 
 

@@ -347,21 +347,21 @@ class OKPayGrabber:
 
         if not rp:
             # 诊断日志：只要有按钮就打印（即使正文为空），便于排查「按钮含领取却未识别」。
-            # 输出钱包识别结果、关键词命中、按钮文字，方便定位漏识别或误判原因。
+            # 输出钱包识别结果、关键词命中、按钮类型与文字，方便定位漏识别或误判原因。
             if getattr(msg, "reply_markup", None):
                 from .config import config as _cfg
                 from .detector import detect_wallet, has_direct_keyword_button
+                from .buttons import btn_text as _btn_text, btn_type as _btn_type
+                from .detector import clean as _clean
                 kw_hit = any(kw in text for kw in _cfg.red_packet_keywords)
                 btn_kw_hit = has_direct_keyword_button(msg, self.run.direct_keywords)
                 wallet = detect_wallet(msg)
-                # 收集所有按钮（类型+文字），最多展示 3 个
+                # 收集所有按钮（类型+文字，兼容层统一新旧 telethon），最多展示 3 个
                 btn_texts = []
                 for row in (getattr(getattr(msg, "reply_markup", None), "rows", None) or []):
                     for btn in row.buttons:
-                        if hasattr(btn, "text") and btn.text:
-                            from .detector import clean as _clean
-                            btn_type = type(btn).__name__.replace("KeyboardButton", "")
-                            btn_texts.append(f"{btn_type}:{_clean(btn.text)}")
+                        label = _clean(_btn_text(btn))
+                        btn_texts.append(f"{_btn_type(btn)}:{label or '∅'}")
                         if len(btn_texts) >= 3:
                             break
                     if len(btn_texts) >= 3:
@@ -472,8 +472,8 @@ class OKPayGrabber:
             finally:
                 self._inflight.discard(key)
 
-        # webapp 快路径：不需要定位消息，直接走 /start
-        if rp.kind == "webapp" and rp.start_param and rp.webapp_bot:
+        # webapp 快路径：不需要定位消息，直接走 /start 或 WebView 直连（万能领取）
+        if rp.kind == "webapp" and rp.webapp_bot and (rp.start_param or rp.webview_url):
             self._inflight.add(key)
             try:
                 return await self._run_webapp_direct(rp, key, chat_title)
@@ -540,17 +540,19 @@ class OKPayGrabber:
             self._inflight.discard(key)
 
     async def _run_webapp_direct(self, rp, key, chat_title):
-        """webapp 快路径：不需要消息对象，直接用 start_param 发给 bot。"""
+        """webapp 快路径：直接用 start_param 发给 bot，或 WebView 直连 URL（万能领取）。"""
         tm = {"detect": time.time(), "msg_date": time.time()}
         self._attempts[key] = self._attempts.get(key, 0) + 1
         self.stats["detected"] += 1
-        log.info(f"🧧 检测到红包({_KIND_LABEL['webapp']}) [{chat_title}]")
+        mode = "WebView直连" if rp.webview_url else "start"
+        log.info(f"🧧 检测到红包({_KIND_LABEL['webapp']}·{mode}) [{chat_title}]")
 
         if not self._webapp:
             log.debug("webapp 模块未就绪，跳过")
             return None
 
-        r = await self._webapp.claim(None, rp.start_param, tm, bot_username=rp.webapp_bot)
+        r = await self._webapp.claim(None, rp.start_param, tm, bot_username=rp.webapp_bot,
+                                     direct_url=rp.webview_url)
         tm["done"] = time.time()
 
         await self._emit_webapp_log(chat_title, rp, r, tm)
