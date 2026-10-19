@@ -345,13 +345,20 @@ def is_red_packet(text: str) -> bool:
 _GENERIC_START = {"home", "start", "help", "menu", "settings", "about", "wallet"}
 
 
-def extract_start(msg) -> tuple[str, str] | None:
+def extract_start(msg, keywords: list[str] | None = None) -> tuple[str, str] | None:
     """提取领取相关的 URL 按钮 → (bot_username, start_param)。
-    过滤掉通用导航参数（home/help/wallet 等），避免误把广告按钮当作领取入口。"""
+
+    双重过滤，防止用账号给陌生 bot 发 /start 导致 spam 风控：
+    1. 按钮文字必须含直接关键词（「查看详情」「点击进入」等广告按钮一律忽略）；
+    2. 过滤通用导航参数（home/help/wallet 等），bot 首页链接不当领取入口。"""
+    kws = keywords or ["领取"]
     for row in _rows(msg):
         for btn in row.buttons:
             url = btn_url(btn)
             if not url:
+                continue
+            # 1) 按钮文字含直接关键词才认（广告按钮「立即进入」等不触发）
+            if not any(kw in clean(btn_text(btn)) for kw in kws):
                 continue
             parsed = urlparse(url)
             if "t.me" not in parsed.netloc and "t.me" not in parsed.path:
@@ -697,21 +704,27 @@ def classify(msg, direct_keywords: list[str] | None = None, decoded_text: str | 
         startapp, packet_id = fll
         return _wrap(RedPacket("fulilai", fulilai_hash=packet_id, fulilai_startapp=startapp))
 
-    # 4) WebView（小程序）按钮直连：文字含直接关键词才触发，不经过 /start 省一步往返
-    wv_url = find_webview_button(msg, direct_keywords)
-    if wv_url:
-        bot = detect_bot_username(msg)
-        if bot:
-            return _wrap(RedPacket("webapp", webview_url=wv_url, webapp_bot=bot))
+    # 4) WebView（小程序）按钮直连：文字含直接关键词 + 已知钱包才触发，
+    #    不经过 /start 省一步往返；广告小程序（未知钱包）一律不开
+    if wallet != "unknown":
+        wv_url = find_webview_button(msg, direct_keywords)
+        if wv_url:
+            bot = detect_bot_username(msg)
+            if bot:
+                return _wrap(RedPacket("webapp", webview_url=wv_url, webapp_bot=bot))
 
-    # 5) URL 按钮（t.me/bot?start=xxx）：start_param 以 vweb-- 开头即网页验证
-    #    （okpay/kkpay/dlqb 共用 vweb 协议；不再硬编码 bot 白名单），其余按私信验证
-    start_info = extract_start(msg)
-    if start_info:
-        bot, start = start_info
-        expr_m = _MATH_RE.search(text)
-        if start.startswith("vweb--") or bot.lower() in WEBAPP_BOTS:
-            return _wrap(RedPacket("webapp", start_param=start, webapp_bot=bot))
-        return _wrap(RedPacket("dm_captcha", start_param=start, webapp_bot=bot,
-                               captcha_expr=expr_m.group(0) if expr_m else None))
+    # 5) URL 按钮（t.me/bot?start=xxx）：按钮含关键词 + 已知钱包 bot 才发起领取。
+    #    反 spam 关键：广告消息正文常带「红包」+ start 链接诱饵，若无钱包校验会
+    #    用账号批量给陌生 bot 发 /start → 账号被 Telegram 风控（链接打不开）。
+    #    start_param 以 vweb-- 开头即网页验证（okpay/kkpay/dlqb 共用 vweb 协议），
+    #    其余按私信验证。新钱包红包先看 🔍 日志，把 bot 加入 WALLET_BOTS 后生效。
+    if wallet != "unknown":
+        start_info = extract_start(msg, direct_keywords)
+        if start_info:
+            bot, start = start_info
+            expr_m = _MATH_RE.search(text)
+            if start.startswith("vweb--") or bot.lower() in WEBAPP_BOTS:
+                return _wrap(RedPacket("webapp", start_param=start, webapp_bot=bot))
+            return _wrap(RedPacket("dm_captcha", start_param=start, webapp_bot=bot,
+                                   captcha_expr=expr_m.group(0) if expr_m else None))
     return None
