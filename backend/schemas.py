@@ -82,6 +82,7 @@ class SettingsUpdate(BaseModel):
     filter_skip_conditions: str | None = None  # 逗号分隔条件类型
     filter_block_wallets: str | None = None    # 逗号分隔钱包标识 kkpay,dlqb,...
     filter_block_tokens: str | None = None     # 逗号分隔币种/代币关键词 kkcoin,kk币,jbcoin,...
+    wallet_whitelist: str | None = None         # 逗号/换行分隔 bot username（钱包白名单）
 
 
 # ---- 秒包群组 ----

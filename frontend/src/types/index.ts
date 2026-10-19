@@ -68,6 +68,7 @@ export interface Settings {
   filter_skip_conditions: string // 逗号分隔条件类型
   filter_block_wallets: string // 逗号分隔钱包标识 kkpay,dlqb,...
   filter_block_tokens: string // 逗号分隔币种/代币关键词 kkcoin,kk币,jbcoin,...
+  wallet_whitelist: string // 逗号/换行分隔 bot username（钱包白名单）
 }
 
 export interface MonitoredGroup {

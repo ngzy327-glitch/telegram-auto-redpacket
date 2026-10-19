@@ -20,8 +20,15 @@ SETTING_KEYS = ["vision_api_key", "vision_base_url", "vision_model",
                 # 领取策略过滤（core/filters.py）
                 "filter_keywords", "filter_currency_mode", "filter_currencies",
                 "filter_min_amounts", "filter_skip_conditions",
+                "filter_block_wallets", "filter_block_tokens",
+                # 钱包白名单（识别放行；屏蔽策略/过滤仍然至上）
+                "wallet_whitelist",
                 # 屏蔽：私信总开关（群/频道/用户/机器人走 block_rules 表）
                 "block_private"]
+
+# 钱包白名单默认值：bot username（小写不带@，逗号分隔）。控制台可改，保存即热更新。
+_DEFAULT_WALLET_WHITELIST = ("hongbao_hb_fs_bot,chyl,xcyl,xingli,okpay,kkpay,"
+                             "dlqb,ftpay,hbfasongkbot,kpay,yhzfb,fllqb")
 
 # 领取条件的合法类型（与 detector.CONDITION_LABELS 对齐，locked 是状态不是条件）
 _VALID_CONDITIONS = {"premium", "group", "user", "turnover", "winloss"}
@@ -90,6 +97,9 @@ def _defaults() -> dict:
         "filter_currencies": "",      # 逗号分隔，大写
         "filter_min_amounts": "",     # JSON 对象 {"USDT":1,"*":0.5}
         "filter_skip_conditions": "",  # 逗号分隔 premium,turnover,...
+        "filter_block_wallets": "",   # 逗号分隔钱包标识 kkpay,dlqb,...
+        "filter_block_tokens": "",    # 逗号分隔币种/代币关键词 kkcoin,kk币,...
+        "wallet_whitelist": _DEFAULT_WALLET_WHITELIST,  # 钱包白名单（逗号分隔 bot username）
         "block_private": "0",         # 屏蔽所有私信红包（"1" 开）
     }
 
@@ -140,13 +150,29 @@ def parse_filter_settings(s: dict) -> dict:
     skip_conds = {c.strip() for c in (s.get("filter_skip_conditions") or "").split(",")
                   if c.strip()} & _VALID_CONDITIONS
 
+    block_wallets = {w.strip().lstrip("@").lower()
+                     for w in (s.get("filter_block_wallets") or "").split(",")
+                     if w.strip()}
+    block_tokens = {t.strip() for t in (s.get("filter_block_tokens") or "").split(",")
+                    if t.strip()}
+
     return {
         "filter_keywords": keywords,
         "filter_currency_mode": mode,
         "filter_currencies": currencies,
         "filter_min_amounts": mins,
         "filter_skip_conditions": skip_conds,
+        "filter_block_wallets": block_wallets,
+        "filter_block_tokens": block_tokens,
     }
+
+
+def parse_wallet_whitelist(s: dict) -> set:
+    """把 DB 字符串形态的钱包白名单解析成 username 集合（小写不带@）。
+    settings 路由热推送与 build_runconfig 共用，保证口径一致。"""
+    return {u.strip().lstrip("@").lower()
+            for u in (s.get("wallet_whitelist") or "").replace("\n", ",").split(",")
+            if u.strip()}
 
 
 async def seed_defaults(session):
@@ -388,6 +414,7 @@ async def build_runconfig(session, account) -> RunConfig:
         },
         capmonster_key=capmonster,
         direct_keywords=direct_kw,
+        wallet_whitelist=parse_wallet_whitelist(s),
         disabled_chat_ids=disabled_ids,
         monitor_enabled=getattr(account, "monitor_enabled", True),
         claim_enabled=getattr(account, "claim_enabled", True),

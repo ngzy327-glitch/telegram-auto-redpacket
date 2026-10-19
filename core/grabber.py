@@ -331,7 +331,8 @@ class OKPayGrabber:
         if len(self._attempts) > _DEDUP_CAP:
             self._attempts.clear()
 
-        rp = classify(msg, self.run.direct_keywords)
+        rp = classify(msg, self.run.direct_keywords,
+                     wallet_whitelist=getattr(self.run, "wallet_whitelist", None))
 
         # 未解锁红包：只广播通知，不分发领取（等解锁后的编辑事件再领）
         if (rp and rp.kind == "locked") or (
@@ -353,7 +354,7 @@ class OKPayGrabber:
                 btn_kw_hit = has_direct_keyword_button(msg, self.run.direct_keywords)
                 if not (_is_rp(text) or btn_kw_hit):
                     return  # 门控未过（非红包）→ 不打日志
-                wallet = detect_wallet(msg)
+                wallet = detect_wallet(msg, getattr(self.run, "wallet_whitelist", None))
                 # 收集所有按钮（类型+文字，兼容层统一新旧 telethon），最多展示 3 个
                 btn_texts = []
                 for row in (getattr(getattr(msg, "reply_markup", None), "rows", None) or []):
@@ -401,7 +402,8 @@ class OKPayGrabber:
         if rp.needs_emoji_decode:
             decoded = await self._decode_emoji_expr(msg, rp.captcha_buttons)
             if decoded:
-                rp2 = classify(msg, self.run.direct_keywords, decoded_text=decoded)
+                rp2 = classify(msg, self.run.direct_keywords, decoded_text=decoded,
+                               wallet_whitelist=getattr(self.run, "wallet_whitelist", None))
                 if rp2 and rp2.captcha_expr:
                     rp = rp2
                 else:
@@ -431,7 +433,8 @@ class OKPayGrabber:
             from .detector import (RedPacket, detect_wallet, parse_conditions,
                                    parse_metadata)
             meta = parse_metadata(msg)
-            rp = RedPacket("locked", state="locked", wallet=detect_wallet(msg),
+            rp = RedPacket("locked", state="locked",
+                           wallet=detect_wallet(msg, getattr(self.run, "wallet_whitelist", None)),
                            conditions=parse_conditions(msg),
                            amount_text=meta["amount_text"], remaining=meta["remaining"],
                            sender_name=meta["sender_name"])
@@ -455,7 +458,8 @@ class OKPayGrabber:
                     break
             if len(btn_info) >= 3:
                 break
-        log.info(f"🔒 检测到未解锁红包 [{chat_title}] wallet={detect_wallet(msg)} "
+        log.info(f"🔒 检测到未解锁红包 [{chat_title}] "
+                 f"wallet={detect_wallet(msg, getattr(self.run, 'wallet_whitelist', None))} "
                  f"bot={detect_bot_username(msg)} buttons={btn_info}")
         from .config import config as app_config
         from .notifier import broadcast_channel

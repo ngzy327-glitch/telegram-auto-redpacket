@@ -8,7 +8,8 @@ from ..db import get_session
 from ..models import User
 from ..runner import runner
 from ..schemas import SettingsUpdate
-from ..settings_store import get_settings, parse_filter_settings, update_settings
+from ..settings_store import (get_settings, parse_filter_settings,
+                              parse_wallet_whitelist, update_settings)
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
@@ -46,6 +47,9 @@ async def write_settings(body: SettingsUpdate, user: User = Depends(get_current_
     if _FILTER_KEYS & data.keys():
         # 过滤配置整组解析（以保存后的全量设置为准，与 build_runconfig 同口径）
         hot.update(parse_filter_settings(result))
+    if "wallet_whitelist" in data:
+        # 钱包白名单热更新（识别放行；屏蔽策略/过滤仍然至上）
+        hot["wallet_whitelist"] = parse_wallet_whitelist(result)
     if hot:
         runner.hot_reload_settings(**hot)
 

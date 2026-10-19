@@ -162,6 +162,13 @@ class RunConfig:
     filter_currencies: set = None        # 币种集合（大写），配合 mode 使用
     filter_min_amounts: dict = None      # 币种→最低总金额；key '*' = 任意币种兜底
     filter_skip_conditions: set = None   # 跳过的条件类型 {premium,group,user,turnover,winloss}
+    filter_block_wallets: set = None     # 钱包黑名单（识别即拦，屏蔽策略至上）
+    filter_block_tokens: set = None      # 币种/代币关键词黑名单（扫描整条消息文本）
+    # —— 钱包白名单（控制台可配、保存即热更新）——
+    # 仅影响「识别放行」：白名单内 bot 的 URL/小程序红包按已知钱包处理。
+    # 屏蔽策略（block_rules/block_private）、钱包黑名单、币种/份数过滤仍然至上，
+    # 白名单无法突破——见 grabber._blocked 与 filters.check_filters 的执行顺序。
+    wallet_whitelist: set = None         # bot username 集合（小写、不带@）
     # —— 屏蔽规则 + 代理（backend blocklist / 账号代理，保存即热更新）——
     proxy: str | None = None             # 账号代理 socks5://user:pass@host:port（None=直连）
     blocked_chat_ids: set = None         # 屏蔽的群/频道 chat_id
@@ -185,6 +192,12 @@ class RunConfig:
             self.filter_min_amounts = {}
         if self.filter_skip_conditions is None:
             self.filter_skip_conditions = set()
+        if self.filter_block_wallets is None:
+            self.filter_block_wallets = set()
+        if self.filter_block_tokens is None:
+            self.filter_block_tokens = set()
+        if self.wallet_whitelist is None:
+            self.wallet_whitelist = set()
         if self.blocked_chat_ids is None:
             self.blocked_chat_ids = set()
         if self.blocked_sender_ids is None:

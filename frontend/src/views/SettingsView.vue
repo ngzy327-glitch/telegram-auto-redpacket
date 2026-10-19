@@ -25,6 +25,9 @@ const skipConditions = ref<string[]>([])
 const blockWallets = ref<string[]>([])
 const blockTokens = ref("")
 
+// —— 钱包白名单（识别放行；屏蔽策略/过滤仍然至上）——
+const walletWhitelist = ref("")
+
 const CURRENCY_SUGGESTIONS = ["USDT", "CNY", "KKCOIN", "WLCOIN", "JIBA", "TRX"]
 // 钱包黑名单可选项（与 core/detector.py WALLET_LABELS 对齐）
 const WALLET_OPTIONS = [
@@ -47,6 +50,7 @@ const CONDITION_OPTIONS = [
 const loading = ref(true)
 const saving = ref(false)
 const savingFilters = ref(false)
+const savingWhitelist = ref(false)
 
 function applySettings(s: Settings) {
   form.max_attempts = s.max_attempts || "4"
@@ -69,6 +73,7 @@ function applySettings(s: Settings) {
     .map((c) => c.trim())
     .filter(Boolean)
   blockTokens.value = s.filter_block_tokens || ""
+  walletWhitelist.value = s.wallet_whitelist || ""
 
   minRules.value = []
   if (s.filter_min_amounts) {
@@ -164,6 +169,25 @@ async function saveFilters() {
   }
 }
 
+async function saveWhitelist() {
+  savingWhitelist.value = true
+  try {
+    // 归一化：换行/逗号分隔 → 去空格/去@/去重 → 逗号拼接
+    const list = walletWhitelist.value
+      .split(/[\n,]/)
+      .map((u) => u.trim().replace(/^@+/, ""))
+      .filter(Boolean)
+    const normalized = Array.from(new Set(list)).join(",")
+    const payload: Partial<Settings> = { wallet_whitelist: normalized }
+    applySettings(await api.updateSettings(payload))
+    ElMessage.success("钱包白名单已保存，对运行中账号实时生效")
+  } catch (e) {
+    ElMessage.error("保存失败：" + (e as Error).message)
+  } finally {
+    savingWhitelist.value = false
+  }
+}
+
 onMounted(load)
 </script>
 
@@ -191,6 +215,40 @@ onMounted(load)
         <div class="form-footer">
           <el-button type="primary" :loading="saving" @click="save">
             保存配置
+          </el-button>
+        </div>
+      </el-form>
+    </el-card>
+
+    <el-card shadow="never">
+      <template #header>
+        <div class="card-title">钱包白名单</div>
+        <div class="card-desc">
+          白名单内钱包按已知钱包识别，其链接/小程序红包才进入领取流程（未知钱包的
+          URL/WebView 一律不动作，防广告）。保存后对运行中账号实时生效，无需重启。
+        </div>
+      </template>
+
+      <el-skeleton v-if="loading" :rows="4" animated />
+
+      <el-form v-else label-position="top" class="settings-form">
+        <el-form-item label="钱包 bot 用户名">
+          <el-input
+            v-model="walletWhitelist"
+            type="textarea"
+            :rows="6"
+            placeholder="每行一个 bot 用户名（@ 可带可不带），例如：&#10;hongbao_hb_fs_bot&#10;chyl&#10;xcyl&#10;xingli"
+          />
+          <div class="hint">
+            逗号或换行分隔，保存时自动去重/去 @/转小写。白名单<b>只负责识别放行</b>：
+            屏蔽策略（群/频道/用户/机器人/私信开关）、钱包黑名单、币种与份数过滤
+            仍然至上，白名单内的钱包一样会被拦截。
+          </div>
+        </el-form-item>
+
+        <div class="form-footer">
+          <el-button type="primary" :loading="savingWhitelist" @click="saveWhitelist">
+            保存钱包白名单
           </el-button>
         </div>
       </el-form>

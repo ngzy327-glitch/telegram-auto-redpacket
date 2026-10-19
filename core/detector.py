@@ -132,14 +132,25 @@ def _cb_data_str(btn) -> str:
         return ""
 
 
-def detect_wallet(msg) -> str:
-    """识别红包来源钱包：via_bot/from → callback 前缀 → URL bot 名，三级回退。"""
+def detect_wallet(msg, whitelist: set[str] | None = None) -> str:
+    """识别红包来源钱包：via_bot/from → 白名单用户名 → callback 前缀 → URL bot 名。
+
+    whitelist（控制台「钱包白名单」，热更新）：bot username 集合（小写不带@）。
+    命中白名单 → 返回该 username 作为钱包标识（未知钱包变已知，URL/小程序领取路径放行）。
+    仅影响识别，不越过屏蔽策略与领取过滤（grabber._blocked / filters.check_filters）。"""
     via = getattr(msg, "via_bot_id", None)
     if via and via in WALLET_BOTS:
         return WALLET_BOTS[via]
     from_id = getattr(getattr(msg, "from_id", None), "user_id", None)
     if from_id and from_id in WALLET_BOTS:
         return WALLET_BOTS[from_id]
+
+    # 白名单（via_bot 用户名优先；via_bot 对象在事件里不一定带，尽力取）
+    if whitelist:
+        uname = (getattr(getattr(msg, "via_bot", None), "username", None) or "")
+        uname = uname.strip().lstrip("@").lower()
+        if uname and uname in whitelist:
+            return uname
 
     # callback data 前缀
     for row in _rows(msg):
@@ -151,7 +162,7 @@ def detect_wallet(msg) -> str:
                 if data.startswith(prefix):
                     return wallet
 
-    # URL 按钮的 bot username（仅匹配已知钱包，避免误把发包人主页当钱包）
+    # URL 按钮的 bot username（仅匹配已知钱包/白名单，避免误把发包人主页当钱包）
     for row in _rows(msg):
         for btn in row.buttons:
             url = btn_url(btn)
@@ -164,6 +175,8 @@ def detect_wallet(msg) -> str:
             bot = path.split("/")[0].lower() if path else ""
             if bot in WALLET_USERNAMES:
                 return WALLET_USERNAMES[bot]
+            if whitelist and bot and bot in whitelist:
+                return bot
     return "unknown"
 
 
@@ -644,7 +657,9 @@ def _has_custom_emoji_in_expr(msg) -> bool:
     )
 
 
-def classify(msg, direct_keywords: list[str] | None = None, decoded_text: str | None = None) -> RedPacket | None:
+def classify(msg, direct_keywords: list[str] | None = None,
+             decoded_text: str | None = None,
+             wallet_whitelist: set[str] | None = None) -> RedPacket | None:
     """把消息分类为红包并附带完整识别上下文。
     返回 None 仅当：非红包 / 已领完 / 无可识别按钮。
     locked（未解锁）会返回 kind='locked' 的 RedPacket（只通知不领取）。
@@ -664,7 +679,7 @@ def classify(msg, direct_keywords: list[str] | None = None, decoded_text: str | 
         return None
 
     # 识别维度：钱包 / 状态 / 条件 / 元数据（与具体领取方式无关，全 kind 共用）
-    wallet = detect_wallet(msg)
+    wallet = detect_wallet(msg, wallet_whitelist)
 
     state = detect_state(msg)
     conditions = parse_conditions(msg)
