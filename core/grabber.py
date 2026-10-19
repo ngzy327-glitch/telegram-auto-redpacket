@@ -364,9 +364,13 @@ class OKPayGrabber:
                             break
                     if len(btn_texts) >= 3:
                         break
+                # 头部+尾部各截一段：钱包 bot 常把固定尾注（如「赌博只是娱乐…」）
+                # 放在消息末尾，只存头部会截掉，导致无法按尾注文本搜索日志
+                head = text[:80]
+                tail = text[-60:] if len(text) > 140 else ""
                 log.info(f"🔍 未识别红包 [{chat_title}] chat_id={msg.chat_id} "
                          f"wallet={wallet} 正文关键词={kw_hit} 按钮关键词={btn_kw_hit} "
-                         f"buttons={btn_texts} 文本={text[:80]!r}")
+                         f"buttons={btn_texts} 文本={head!r} 尾部={tail!r}")
             return
 
         if not self._chat_allowed(msg.chat_id):
