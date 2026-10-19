@@ -201,7 +201,10 @@ def _clean_inline(s: str) -> str:
 
 
 def detect_state(msg) -> str:
-    """红包当前状态：exhausted（已领完）| locked（未解锁）| claimable（可领）。"""
+    """红包当前状态：exhausted（已领完）| locked（未解锁）| claimable（可领）。
+
+    注意「已解锁」是解锁完成的正向表述（如「已解锁，立即领取」），不能因
+    含「解锁」二字误判为未解锁——先剔除「已解锁」再做子串匹配。"""
     raw = _raw(msg)
     if _EXHAUSTED_RE.search(raw):
         return "exhausted"
@@ -210,7 +213,9 @@ def detect_state(msg) -> str:
             if btn_type(btn) != "callback":
                 continue
             label = clean(btn_text(btn))
-            if "解锁" in label or "已锁定" in label:
+            # 剔除正向表述「已解锁」后，剩下的「解锁/锁定」才是真锁按钮
+            label_wo_unlocked = label.replace("已解锁", "")
+            if "解锁" in label_wo_unlocked or "锁定" in label_wo_unlocked:
                 return "locked"
             data = _cb_data_str(btn)
             if data and any(mk in data for mk in _LOCK_DATA_MARKERS):
@@ -375,6 +380,15 @@ def extract_start(msg, keywords: list[str] | None = None) -> tuple[str, str] | N
     return None
 
 
+def _label_is_lock(text: str) -> bool:
+    """按钮文字是否锁/解锁类。
+
+    「已解锁」是解锁完成的正向表述（如「已解锁，立即领取」），必须先剔除
+    再做「解锁/锁定」子串匹配，否则解锁完成的红包被当成锁按钮跳过。"""
+    t = text.replace("已解锁", "")
+    return "解锁" in t or "锁定" in t
+
+
 def has_direct_keyword_button(msg, keywords: list[str] | None = None) -> bool:
     """是否存在含指定关键词的按钮（不返回 data，仅做门控判断）。
 
@@ -386,7 +400,7 @@ def has_direct_keyword_button(msg, keywords: list[str] | None = None) -> bool:
     for row in _rows(msg):
         for btn in row.buttons:
             text = clean(btn_text(btn))
-            if not text or "解锁" in text or "已锁定" in text:
+            if not text or _label_is_lock(text):
                 continue
             if any(kw in text for kw in kws):
                 return True
@@ -397,7 +411,8 @@ def find_direct_claim(msg, keywords: list[str] | None = None) -> bytes | None:
     """含指定关键词的 callback 按钮 → 直接领取（子串匹配，兼容各类钱包的隐藏字符/emoji）。
 
     排除锁定按钮：fllqb 的「🧧解锁后领取，管理叫解锁是⚠️诈骗」含「领取」却是锁按钮
-    （data=mhblock...），文字含「解锁/已锁定」或 data 命中锁标记一律跳过。
+    （data=mhblock...），文字锁类（剔除「已解锁」后含「解锁/锁定」）或 data 命中
+    锁标记一律跳过。
 
     注意：本函数只看按钮文字，不校验钱包来源；钱包校验由调用方（classify）负责，
     避免广告 bot 的「领取优惠」按钮被误点。"""
@@ -407,7 +422,7 @@ def find_direct_claim(msg, keywords: list[str] | None = None) -> bytes | None:
             if btn_type(btn) != "callback":
                 continue
             text = clean(btn_text(btn))
-            if "解锁" in text or "已锁定" in text:
+            if _label_is_lock(text):
                 continue
             data = _cb_data_str(btn)
             if data and (data.startswith(("mhblock", "unlock", "locked_"))
@@ -419,9 +434,8 @@ def find_direct_claim(msg, keywords: list[str] | None = None) -> bytes | None:
 
 
 def _is_lock_button(btn) -> bool:
-    """是否锁定/解锁类按钮（文字或 data 命中锁标记）。"""
-    text = clean(btn_text(btn))
-    if "解锁" in text or "已锁定" in text:
+    """是否锁定/解锁类按钮（文字或 data 命中锁标记，文字先剔除「已解锁」）。"""
+    if _label_is_lock(clean(btn_text(btn))):
         return True
     data = _cb_data_str(btn)
     if data and (data.startswith(("mhblock", "unlock", "locked_"))

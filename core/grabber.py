@@ -440,7 +440,23 @@ class OKPayGrabber:
         if skip:
             log.info(f"⏭️ 忽略未解锁红包 [{chat_title}]：{skip}")
             return
-        log.info(f"🔒 检测到未解锁红包 [{chat_title}]")
+        # 诊断：按钮文字 + data 前缀 + 钱包/bot 来源，便于排查误判和识别新钱包
+        from .detector import (btn_text, btn_type, clean, detect_bot_username,
+                               detect_wallet)
+        from .buttons import cb_data as _cb
+        btn_info = []
+        for row in (getattr(getattr(msg, "reply_markup", None), "rows", None) or []):
+            for btn in row.buttons:
+                data = _cb(btn)
+                data_head = (data[:24].decode("utf-8", "replace") + "…") if data else ""
+                btn_info.append(f"{btn_type(btn)}:{clean(btn_text(btn)) or '∅'}"
+                                + (f"|{data_head}" if data_head else ""))
+                if len(btn_info) >= 3:
+                    break
+            if len(btn_info) >= 3:
+                break
+        log.info(f"🔒 检测到未解锁红包 [{chat_title}] wallet={detect_wallet(msg)} "
+                 f"bot={detect_bot_username(msg)} buttons={btn_info}")
         from .config import config as app_config
         from .notifier import broadcast_channel
         from .reporter import build_locked_report
