@@ -25,7 +25,8 @@ from urllib.parse import parse_qs, urlparse
 from telethon.tl import types
 
 from .buttons import btn_text, btn_type, cb_data, btn_url
-from .charset import MATH_RE as _MATH_RE, buttons_are_digit, normalize_operand
+from .charset import (MATH_RE as _MATH_RE, buttons_are_digit, normalize_char,
+                      normalize_operand)
 from .config import config
 
 # telethon 1.45+ 把按钮结构改为 KeyboardInlineButton(text, type=...)，
@@ -528,6 +529,64 @@ _ANSWER_PATTERNS = [
     r"为[:：]\s*([0-9A-Za-z]+)",
 ]
 
+# 元数据行关键词：这些行里的数字是金额/份数/流水，不是验证码答案
+_META_LINE_RE = re.compile(
+    r"总金额|金额|剩余|流水|输赢|有效期|发送了一个红包|邀请|会员|加群|群组")
+# 行内元数据片段：「剩余 3/10」「剩余：6272」等
+_META_INLINE_RE = re.compile(r"剩余[:：]?\s*\d+(?:\s*/\s*\d+)?")
+# 行内「数字+币种」：1000 USDT / 1,000.5 KKCOIN
+_AMOUNT_INLINE_RE = re.compile(r"\d+(?:[.,]\d+)*\s*[A-Za-z]{2,10}\b")
+
+
+def _answer_tokens(text: str) -> list[str]:
+    """把文本切成候选答案 token：可归一化为字母/数字的连续字符段。
+
+    按字符级归一化切分（而非 re.split [^0-9A-Za-z]），花式 Unicode
+    数字/字母（𝟨𝟤𝟩𝟤、🅰 等）不会被当分隔符拆散；中文/标点/emoji 是分隔。"""
+    tokens, buf = [], []
+    for ch in text or "":
+        if normalize_char(ch):
+            buf.append(ch)
+        else:
+            if buf:
+                tokens.append("".join(buf))
+                buf = []
+    if buf:
+        tokens.append("".join(buf))
+    return tokens
+
+
+def _strip_metadata(text: str) -> str:
+    """剔除金额/剩余/流水等元数据片段，只留可能含验证码答案的文本。
+
+    数字/混合按钮反推答案专用：避免把「总金额 1000」「剩余 3/10」
+    「流水 5000」里的数字误当验证码答案点错按钮。"""
+    kept = [ln for ln in (text or "").splitlines()
+            if not _META_LINE_RE.search(ln)]
+    out = "\n".join(kept)
+    out = _META_INLINE_RE.sub("", out)
+    out = _AMOUNT_INLINE_RE.sub("", out)
+    return out
+
+
+def _has_quiz_button_set(msg) -> bool:
+    """是否有 ≥3 个短字母数字 callback 按钮（验证码选项特征）。
+
+    仅用于把「纯验证码文案」（正文无红包关键词）消息放进识别流程；
+    识别失败不会点击任何按钮，只会打 🔍 日志，无广告误点风险。"""
+    count = 0
+    for row in _rows(msg):
+        for btn in row.buttons:
+            if btn_type(btn) != "callback":
+                continue
+            label = clean(btn_text(btn)).strip()
+            if not label or "领取" in label:
+                continue
+            n = normalize_operand(label)
+            if 2 <= len(n) <= 12:
+                count += 1
+    return count >= 3
+
 
 def find_captcha_quiz(msg, decoded_text: str | None = None) -> tuple[str, list[tuple[str, bytes]]] | None:
     """验证码红包：文本含算式或明文验证码 + callback 按钮（数字或字母选项）。
@@ -537,8 +596,9 @@ def find_captcha_quiz(msg, decoded_text: str | None = None) -> tuple[str, list[t
     三层识别（任一命中即可，全部失败返回 None）：
     1) 算式 X op Y = ?（数字或字母操作数）
     2) 关键词引导的明文答案：验证码/答案/请选择/选择/为： ABC
-    3) 按钮反推（仅字母按钮，防与金额/剩余数字混淆）：
-       消息文本中第一个与按钮标签归一化后完全相等的 token 即答案"""
+    3) 按钮反推：答案直接写在消息里，token 与按钮归一化后相等。
+       字母/数字/字母数字混合按钮（6272、hsns、gYhB 等四选一至十二选一）
+       均支持；数字/混合先剔除金额等元数据再匹配，防点错按钮"""
     text = decoded_text or getattr(msg, "text", None) or getattr(msg, "raw_text", None) or ""
     buttons = _collect_quiz_buttons(msg)
     if not buttons:
@@ -555,21 +615,28 @@ def find_captcha_quiz(msg, decoded_text: str | None = None) -> tuple[str, list[t
         if m2:
             return (m2.group(1), buttons)
 
-    # 3) 按钮反推：仅当按钮是纯字母选项时启用（数字按钮易与金额/剩余混淆）
-    if buttons_are_digit([l for l, _ in buttons]) is False:
+    # 3) 按钮反推：答案直接写在消息里（无算式、无引导关键词），
+    #    文本 token 与按钮标签归一化后完全相等即答案。
+    #    - 纯字母按钮：直接匹配（字母 token 不会与金额混淆）
+    #    - 数字/字母数字混合按钮（如 6272/hsns/gYhB 四选一）：先剔除
+    #      金额/剩余/流水等元数据片段再匹配；纯数字 token 需 ≥3 位
+    #      （避免 2 位散数误中）；≥3 个选项才启用（防广告误点）
+    btn_kind = buttons_are_digit([l for l, _ in buttons])
+    if btn_kind is False or len(buttons) >= 3:
         # 归一化按钮标签，构造 {norm: (原label, data)} 表
         btn_norm: dict[str, tuple[str, bytes]] = {}
         for label, data in buttons:
             n = normalize_operand(label).upper()
             if n and n not in btn_norm:
                 btn_norm[n] = (label, data)
-        # 文本按非字母数字切 token，找第一个长度 ≥2 且命中按钮集合的
-        for tok in re.split(r"[^0-9A-Za-z]+", text):
-            if len(tok) < 2:
-                continue
+        hay = text if btn_kind is False else _strip_metadata(text)
+        for tok in _answer_tokens(hay):
             n = normalize_operand(tok).upper()
-            if n in btn_norm:
-                return (n, buttons)
+            if not n or n not in btn_norm:
+                continue
+            if n.isdigit() and len(n) < 3:
+                continue
+            return (n, buttons)
 
     return None
 
@@ -674,8 +741,11 @@ def classify(msg, direct_keywords: list[str] | None = None,
     if not getattr(msg, "reply_markup", None):
         return None
 
-    # 统一门控（不做钱包放行：已知钱包的余额/系统消息等非红包一律不进流程）
-    if not (is_red_packet(text) or has_direct_keyword_button(msg, direct_keywords)):
+    # 统一门控（不做钱包放行：已知钱包的余额/系统消息等非红包一律不进流程）。
+    # 验证码选项特征（≥3 个短字母数字按钮）也放行进识别——识别失败只会打
+    # 🔍 日志、不会点击，无广告误点风险；纯验证码文案（正文无红包关键词）靠它进流程。
+    if not (is_red_packet(text) or has_direct_keyword_button(msg, direct_keywords)
+            or _has_quiz_button_set(msg)):
         return None
 
     # 识别维度：钱包 / 状态 / 条件 / 元数据（与具体领取方式无关，全 kind 共用）
