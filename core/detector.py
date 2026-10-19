@@ -423,11 +423,12 @@ def _is_lock_button(btn) -> bool:
     return False
 
 
-def find_sole_callback(msg) -> bytes | None:
-    """万能领取：消息里唯一的非锁 callback 按钮 → 直接点击（不看按钮文字）。
+def find_sole_callback(msg, keywords: list[str] | None = None) -> bytes | None:
+    """唯一非锁 callback 按钮，且按钮文字含直接关键词 → 直接点击。
 
-    已知钱包 bot 发的红包，其唯一可点按钮就是领取载体；文案千变万化不再依赖关键词。
-    多个 callback 按钮是验证码选项（走 captcha 流程），返回 None 不误点。"""
+    关键词不命中一律不点（防误点无关按钮）；关键词在控制台「直接关键词」配置，
+    按钮文字特殊时看 🔍 未识别日志里的 buttons= 再补充关键词即可。"""
+    kws = keywords or ["领取"]
     sole = None
     for row in _rows(msg):
         for btn in row.buttons:
@@ -437,20 +438,28 @@ def find_sole_callback(msg) -> bytes | None:
                 continue
             if sole is not None:
                 return None  # 多于一个 → 验证码/多选项场景，交给 captcha 分支
-            sole = cb_data(btn)
-    return sole
+            sole = btn
+    if sole is None:
+        return None
+    if not any(kw in clean(btn_text(sole)) for kw in kws):
+        return None
+    return cb_data(sole)
 
 
-def find_webview_button(msg) -> str | None:
-    """万能领取：inline WebView（小程序）按钮 → 返回其 URL（不看按钮文字）。
+def find_webview_button(msg, keywords: list[str] | None = None) -> str | None:
+    """inline WebView（小程序）按钮，且按钮文字含直接关键词 → 返回其 URL。
 
-    按钮类型判断走兼容层（telethon 1.45 结构变化不影响）。"""
+    关键词不命中不触发（防误开广告小程序）；按钮类型判断走兼容层。"""
+    kws = keywords or ["领取"]
     for row in _rows(msg):
         for btn in row.buttons:
-            if btn_type(btn) == "webview":
-                url = btn_url(btn)
-                if url:
-                    return url
+            if btn_type(btn) != "webview":
+                continue
+            if not any(kw in clean(btn_text(btn)) for kw in kws):
+                continue
+            url = btn_url(btn)
+            if url:
+                return url
     return None
 
 
@@ -642,12 +651,11 @@ def classify(msg, direct_keywords: list[str] | None = None, decoded_text: str | 
     返回 None 仅当：非红包 / 已领完 / 无可识别按钮。
     locked（未解锁）会返回 kind='locked' 的 RedPacket（只通知不领取）。
 
-    万能领取策略（不依赖文案）：
-    - 门控：已知钱包（via_bot/from_id/callback前缀/URL bot名 四级识别）→ 直接放行；
-      未知钱包 → 退回关键词模式（正文或按钮含红包关键词），防广告 bot 误点。
-    - 分发：按按钮结构（类型+数量）决定领取方式，按钮文字只作参考：
-      唯一 callback → 直接点；多 callback → 验证码；WebView → 网页验证；
-      URL start → 网页验证/私信验证。
+    万能领取策略（结构分发 + 关键词校验，双保险）：
+    - 门控：已知钱包（via_bot/from_id/callback前缀/URL bot名 四级识别）→ 放行识别
+      （正文文案再怪也能认出是红包）；未知钱包 → 退回关键词模式，防广告 bot 误点。
+    - 点击：任何按钮被点击/触发前，按钮文字必须含「直接关键词」（控制台可配），
+      未命中一律不点；按钮文字特殊时看 🔍 未识别日志补充关键词。
     领取分类优先级：direct > captcha > fulilai > webapp(vweb--) > dm_captcha(其余 URL)。"""
     text = decoded_text or getattr(msg, "text", None) or getattr(msg, "raw_text", None) or ""
     if not getattr(msg, "reply_markup", None):
@@ -656,7 +664,7 @@ def classify(msg, direct_keywords: list[str] | None = None, decoded_text: str | 
     # 识别维度：钱包 / 状态 / 条件 / 元数据（与具体领取方式无关，全 kind 共用）
     wallet = detect_wallet(msg)
 
-    # 万能门控：已知钱包的红包不依赖文案（按钮即领取载体）；
+    # 万能门控：已知钱包放行识别（正文文案再怪也能认出红包）；
     # 未知钱包退回关键词模式，避免广告 bot 的「领取优惠」被误点。
     if wallet == "unknown":
         if not (is_red_packet(text) or has_direct_keyword_button(msg, direct_keywords)):
@@ -684,18 +692,12 @@ def classify(msg, direct_keywords: list[str] | None = None, decoded_text: str | 
     if state == "locked":
         return _wrap(RedPacket("locked", state="locked"))
 
-    # 1) 万能领取：已知钱包的唯一非锁 callback 按钮 → 直接点击（不看文字）
-    if wallet != "unknown":
-        sole = find_sole_callback(msg)
-        if sole:
-            return _wrap(RedPacket("direct", direct_data=sole))
-
-    # 2) 关键词领取（兜底：未知钱包路径 + 已知钱包多按钮中含关键词的）
+    # 1) 直接领取：callback 按钮文字含直接关键词 → 点击（关键词不命中一律不点）
     data = find_direct_claim(msg, direct_keywords)
     if data:
         return _wrap(RedPacket("direct", direct_data=data))
 
-    # 3) 窗口验证码（群内算式或明文验证码 + callback 选项按钮）
+    # 2) 窗口验证码（群内算式或明文验证码 + callback 选项按钮）
     quiz = find_captcha_quiz(msg, decoded_text)
     if quiz:
         from core.claimers.captcha import solve_expr
@@ -707,23 +709,23 @@ def classify(msg, direct_keywords: list[str] | None = None, decoded_text: str | 
             return _wrap(RedPacket("captcha", captcha_buttons=buttons, needs_emoji_decode=True))
         return _wrap(RedPacket("captcha", captcha_expr=expr, captcha_buttons=buttons))
 
-    # 3.5) 汤臣钱包(tcqb) emoji 验证码：备注含答案 emoji，按钮是 emoji 选项
+    # 2.5) 汤臣钱包(tcqb) emoji 验证码：备注含答案 emoji，按钮是 emoji 选项
     if wallet == "tcqb":
         eq = find_tcqb_emoji_quiz(msg, text)
         if eq:
             answer_emoji, buttons = eq
             return _wrap(RedPacket("captcha", captcha_buttons=buttons, emoji_answer=answer_emoji))
 
-    # 4) 福利来红包（fllqb URL，startapp + hash/dataId，与 ?start= 不同）
+    # 3) 福利来红包（fllqb URL，startapp + hash/dataId，与 ?start= 不同）
     fll = find_fulilai(msg)
     if fll:
         startapp, packet_id = fll
         return _wrap(RedPacket("fulilai", fulilai_hash=packet_id, fulilai_startapp=startapp))
 
-    # 4) 万能领取：红包消息自带的 WebView（小程序）按钮 → 直接打开网页验证
-    #    （不经过 /start，省一步往返；仅已知钱包启用，防广告小程序）
+    # 4) WebView（小程序）按钮直连：文字含直接关键词才触发（防误开广告小程序），
+    #    不经过 /start 省一步往返；仅已知钱包启用
     if wallet != "unknown":
-        wv_url = find_webview_button(msg)
+        wv_url = find_webview_button(msg, direct_keywords)
         if wv_url:
             bot = detect_bot_username(msg)
             if bot:
