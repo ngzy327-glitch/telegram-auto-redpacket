@@ -369,17 +369,17 @@ def extract_start(msg) -> tuple[str, str] | None:
 
 
 def has_direct_keyword_button(msg, keywords: list[str] | None = None) -> bool:
-    """是否存在含指定关键词的 callback 按钮（不返回 data，仅做门控判断）。
+    """是否存在含指定关键词的按钮（不返回 data，仅做门控判断）。
 
     用于放宽 is_red_packet 门槛：消息正文不含红包关键词、但按钮含「领取」时，
-    仍应进入 direct 判定链路，避免漏识别。"""
+    仍应进入 direct 判定链路，避免漏识别。
+    检查所有按钮类型（callback/URL/WebView 等）：门控只判断「像不像红包」，
+    具体领取方式由 classify 后续分支决定，不影响安全性。"""
     kws = keywords or ["领取"]
     for row in _rows(msg):
         for btn in row.buttons:
-            if not isinstance(btn, KeyboardButtonCallback):
-                continue
-            text = clean(btn.text)
-            if "解锁" in text or "已锁定" in text:
+            text = clean(getattr(btn, "text", "") or "")
+            if not text or "解锁" in text or "已锁定" in text:
                 continue
             if any(kw in text for kw in kws):
                 return True

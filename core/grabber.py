@@ -354,13 +354,14 @@ class OKPayGrabber:
                 kw_hit = any(kw in text for kw in _cfg.red_packet_keywords)
                 btn_kw_hit = has_direct_keyword_button(msg, self.run.direct_keywords)
                 wallet = detect_wallet(msg)
-                # 收集所有 callback 按钮文字（clean 后），最多展示 3 个
+                # 收集所有按钮（类型+文字），最多展示 3 个
                 btn_texts = []
                 for row in (getattr(getattr(msg, "reply_markup", None), "rows", None) or []):
                     for btn in row.buttons:
                         if hasattr(btn, "text") and btn.text:
                             from .detector import clean as _clean
-                            btn_texts.append(_clean(btn.text))
+                            btn_type = type(btn).__name__.replace("KeyboardButton", "")
+                            btn_texts.append(f"{btn_type}:{_clean(btn.text)}")
                         if len(btn_texts) >= 3:
                             break
                     if len(btn_texts) >= 3:
