@@ -314,10 +314,14 @@ class OKPayGrabber:
             return
 
         msg = event.message
+        chat = event.chat
+        chat_title = (getattr(chat, "title", None)
+                      or getattr(chat, "first_name", None) or "私聊")
+        text = getattr(msg, "text", None) or getattr(msg, "raw_text", None) or ""
+        log.info(f"📥 收到消息 [{chat_title}] chat_id={msg.chat_id} 有按钮={bool(getattr(msg, 'reply_markup', None))} 文本={text[:50]!r}")
 
         # 诊断：有按钮的消息（疑似红包）打印到达日志
         if getattr(msg, "reply_markup", None):
-            text = getattr(msg, "text", None) or getattr(msg, "raw_text", None) or ""
             log.debug(f"📨 收到带按钮消息 chat_id={msg.chat_id} 文本={text[:60]!r}")
 
         # 屏蔽规则：私信/群/频道/用户/机器人 命中即忽略（不检测/不领取/不通知/不广播）
@@ -332,13 +336,7 @@ class OKPayGrabber:
         if len(self._attempts) > _DEDUP_CAP:
             self._attempts.clear()
 
-        text = getattr(msg, "text", None) or getattr(msg, "raw_text", None) or ""
-
         rp = classify(msg, self.run.direct_keywords)
-
-        chat = event.chat
-        chat_title = (getattr(chat, "title", None)
-                      or getattr(chat, "first_name", None) or "私聊")
 
         # 未解锁红包：只广播通知，不分发领取（等解锁后的编辑事件再领）
         if (rp and rp.kind == "locked") or (
