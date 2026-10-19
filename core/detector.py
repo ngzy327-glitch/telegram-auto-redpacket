@@ -272,6 +272,19 @@ def clean(s: str) -> str:
     return "".join(out)
 
 
+# 反爬隐形字符（零宽 + 变体选择符）：透明剔除
+_INVISIBLE = _ZERO_WIDTH + "\ufe0f\ufe0e"
+
+
+def _deinvis(s: str) -> str:
+    """剔除零宽/变体选择符等反爬隐形字符（保留空格/换行/emoji）。
+
+    与 clean() 的区别：clean 面向按钮文字对比（连空格都删），本函数面向
+    正文解析——钱包会把零宽字符插进「验证码」关键词或答案数字中间拆断
+    匹配，这里透明剔除后再做正则/token 匹配。"""
+    return "".join(ch for ch in s or "" if ch not in _INVISIBLE)
+
+
 def _rows(msg):
     return getattr(getattr(msg, "reply_markup", None), "rows", None) or []
 
@@ -346,7 +359,7 @@ def is_red_packet(text: str) -> bool:
     2) 结构识别：含算式 `X op Y = ?`——验证码红包文案千变万化
     3) 结构识别：含「验证码/答案/选择/领取」任一关键词（通用验证码红包，不依赖特定 bot）
     4) 排除已领完：文本含「剩余:0/N」→ 已无余额，直接跳过"""
-    t = text or ""
+    t = _deinvis(text or "")
     # 已领完 → 不是可领红包
     if _EXHAUSTED_RE.search(t):
         return False
@@ -519,14 +532,15 @@ def _collect_quiz_buttons(msg) -> list[tuple[str, bytes]]:
     return buttons
 
 
-# 验证码答案提取关键词（按优先级，越靠前优先级越高）
+# 验证码答案提取关键词（按优先级，越靠前优先级越高）。
+# 分隔符类 [\s:：是]*：冒号/空格/「是」均常见；文本已先过 _deinvis 剔零宽反爬。
 _ANSWER_PATTERNS = [
-    r"验证码[:：\s]*([0-9A-Za-z]+)",
-    r"答案为[:：\s]*([0-9A-Za-z]+)",
-    r"答案[:：\s]*([0-9A-Za-z]+)",
-    r"请选择[:：\s]*([0-9A-Za-z]+)",
-    r"选择[:：\s]*([0-9A-Za-z]+)",
-    r"为[:：]\s*([0-9A-Za-z]+)",
+    r"验证码[\s:：是]*([0-9A-Za-z]+)",
+    r"答案为[\s:：是]*([0-9A-Za-z]+)",
+    r"答案[\s:：是]*([0-9A-Za-z]+)",
+    r"请选择[\s:：是]*([0-9A-Za-z]+)",
+    r"选择[\s:：是]*([0-9A-Za-z]+)",
+    r"为[:：\s]*([0-9A-Za-z]+)",
 ]
 
 # 元数据行关键词：这些行里的数字是金额/份数/流水，不是验证码答案
@@ -542,9 +556,12 @@ def _answer_tokens(text: str) -> list[str]:
     """把文本切成候选答案 token：可归一化为字母/数字的连续字符段。
 
     按字符级归一化切分（而非 re.split [^0-9A-Za-z]），花式 Unicode
-    数字/字母（𝟨𝟤𝟩𝟤、🅰 等）不会被当分隔符拆散；中文/标点/emoji 是分隔。"""
+    数字/字母（𝟨𝟤𝟩𝟤、🅰 等）不会被当分隔符拆散；中文/标点/emoji 是分隔。
+    零宽反爬字符透明跳过（不切分），防答案数字被拆断。"""
     tokens, buf = [], []
     for ch in text or "":
+        if ch in _INVISIBLE:
+            continue
         if normalize_char(ch):
             buf.append(ch)
         else:
@@ -598,8 +615,11 @@ def find_captcha_quiz(msg, decoded_text: str | None = None) -> tuple[str, list[t
     2) 关键词引导的明文答案：验证码/答案/请选择/选择/为： ABC
     3) 按钮反推：答案直接写在消息里，token 与按钮归一化后相等。
        字母/数字/字母数字混合按钮（6272、hsns、gYhB 等四选一至十二选一）
-       均支持；数字/混合先剔除金额等元数据再匹配，防点错按钮"""
-    text = decoded_text or getattr(msg, "text", None) or getattr(msg, "raw_text", None) or ""
+       均支持；数字/混合先剔除金额等元数据再匹配，防点错按钮
+    文本先过 _deinvis 剔零宽反爬——钱包会把零宽字符插进「验证码」
+    关键词或答案中间（验​证码：6‌272）拆断匹配，这里透明剔除后再匹配。"""
+    text = _deinvis(decoded_text or getattr(msg, "text", None)
+                   or getattr(msg, "raw_text", None) or "")
     buttons = _collect_quiz_buttons(msg)
     if not buttons:
         return None
